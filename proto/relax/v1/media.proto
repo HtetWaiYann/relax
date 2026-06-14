@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package relax.v1;
+
+option go_package = "relax/gen/relax/v1;relaxv1";
+
+message MediaMetadata {
+  string title = 1;
+  int32 year = 2;
+  string tmdb_id = 3;
+  string poster_url = 4;
+  string overview = 5;
+  repeated string genres = 6;
+  int32 runtime_minutes = 7;
+}
+
+message SearchResult {
+  MediaMetadata metadata = 1;
+  double score = 2;
+}

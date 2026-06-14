@@ -1,0 +1,34 @@
+# Dev environment for macOS (Apple Silicon or Intel).
+#
+#   pnpm gen:proto                    # generate apps/backend/gen on the host
+#   docker compose up backend         # boot the Go backend in a container
+#   pnpm --filter @relax/electron dev # run the Electron app natively on your Mac
+#
+# The Electron app is desktop-native, not containerized — it talks to the
+# backend at http://localhost:8080.
+
+services:
+  backend:
+    container_name: relax-backend-dev
+    build:
+      context: .
+      dockerfile: docker/backend.dev.Dockerfile
+    working_dir: /app
+    ports:
+      - "8080:8080"
+    env_file:
+      - ./apps/backend/.env
+    environment:
+      PORT: "8080"
+      APP_ENV: development
+      LOG_LEVEL: debug
+      ALLOWED_ORIGIN: "http://localhost:5173"
+    volumes:
+      - ./apps/backend:/app
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    restart: unless-stopped
+
+volumes:
+  go-mod-cache: {}
+  go-build-cache: {}

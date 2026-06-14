@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package relax.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "relax/gen/relax/v1;relaxv1";
+
+message WatchProgress {
+  string media_id = 1;
+  int64 position_seconds = 2;
+  int64 duration_seconds = 3;
+  google.protobuf.Timestamp last_watched_at = 4;
+}

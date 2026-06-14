@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package relax.v1;
+
+import "relax/v1/media.proto";
+import "relax/v1/torrent.proto";
+import "relax/v1/watch_progress.proto";
+
+option go_package = "relax/gen/relax/v1;relaxv1";
+
+message SearchRequest {
+  string query = 1;
+  int32 page_size = 2;
+  int32 page = 3;
+}
+
+message SearchResponse {
+  repeated SearchResult results = 1;
+  int32 total = 2;
+}
+
+message AddTorrentRequest {
+  string magnet_uri = 1;
+  string media_id = 2;
+}
+
+message AddTorrentResponse {
+  Torrent torrent = 1;
+}
+
+message RemoveTorrentRequest {
+  string torrent_id = 1;
+}
+
+message RemoveTorrentResponse {
+  bool removed = 1;
+}
+
+message GetMetadataRequest {
+  string tmdb_id = 1;
+}
+
+message GetMetadataResponse {
+  MediaMetadata metadata = 1;
+}
+
+message SaveWatchProgressRequest {
+  WatchProgress progress = 1;
+}
+
+message SaveWatchProgressResponse {
+  WatchProgress progress = 1;
+}
+
+message GetWatchProgressRequest {
+  string media_id = 1;
+}
+
+message GetWatchProgressResponse {
+  WatchProgress progress = 1;
+}
+
+message StreamTorrentProgressRequest {
+  string torrent_id = 1;
+}
+
+message TorrentProgressUpdate {
+  Torrent torrent = 1;
+}
+
+service RelaxService {
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc AddTorrent(AddTorrentRequest) returns (AddTorrentResponse);
+  rpc RemoveTorrent(RemoveTorrentRequest) returns (RemoveTorrentResponse);
+  rpc GetMetadata(GetMetadataRequest) returns (GetMetadataResponse);
+  rpc SaveWatchProgress(SaveWatchProgressRequest) returns (SaveWatchProgressResponse);
+  rpc GetWatchProgress(GetWatchProgressRequest) returns (GetWatchProgressResponse);
+  rpc StreamTorrentProgress(StreamTorrentProgressRequest) returns (stream TorrentProgressUpdate);
+}

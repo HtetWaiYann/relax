@@ -1,0 +1,9 @@
+node_modules
+dist
+build
+out
+release
+.turbo
+packages/types/src/gen
+apps/backend/gen
+pnpm-lock.yaml

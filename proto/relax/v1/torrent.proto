@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package relax.v1;
+
+option go_package = "relax/gen/relax/v1;relaxv1";
+
+enum TorrentStatus {
+  TORRENT_STATUS_UNSPECIFIED = 0;
+  TORRENT_STATUS_IDLE = 1;
+  TORRENT_STATUS_DOWNLOADING = 2;
+  TORRENT_STATUS_SEEDING = 3;
+  TORRENT_STATUS_ERROR = 4;
+}
+
+message Torrent {
+  string id = 1;
+  string magnet_uri = 2;
+  string name = 3;
+  int64 size_bytes = 4;
+  TorrentStatus status = 5;
+  double progress_pct = 6;
+  int64 download_speed_bps = 7;
+  int64 upload_speed_bps = 8;
+  int32 peer_count = 9;
+  int32 selected_file_index = 10;
+}

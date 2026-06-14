@@ -1,0 +1,42 @@
+# Root .dockerignore — applies to all build contexts rooted at this repo.
+
+# VCS
+.git
+.gitignore
+
+# CI / editor
+.github
+.vscode
+.idea
+.husky
+
+# Node + Turbo
+node_modules
+**/node_modules
+.turbo
+**/.turbo
+
+# Build / dist artifacts
+**/dist
+**/out
+**/build
+**/release
+apps/backend/relaxd
+apps/backend/relaxd.exe
+apps/backend/tmp
+
+# Generated proto code (re-generated inside the image)
+packages/types/src/gen
+apps/backend/gen
+
+# Secrets & local state
+**/.env
+**/.env.*.local
+apps/backend/relax.db
+
+# Logs / misc
+*.log
+.DS_Store
+
+# Plan + memory directories (host-side dev tooling)
+plans

@@ -1,0 +1,11 @@
+{
+  "name": "@relax/backend",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "go run ./cmd/relaxd",
+    "build": "go build -o relaxd ./cmd/relaxd",
+    "lint": "go vet ./... && (command -v golangci-lint >/dev/null 2>&1 && golangci-lint run ./... || echo 'golangci-lint not installed, skipping')",
+    "test": "go test ./..."
+  }
+}

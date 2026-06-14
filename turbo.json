@@ -1,0 +1,49 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "tui",
+  "tasks": {
+    "//#gen:proto": {
+      "inputs": ["proto/**/*.proto", "buf.yaml", "buf.gen.yaml"],
+      "outputs": [
+        "packages/types/src/gen/**",
+        "apps/backend/gen/**"
+      ]
+    },
+    "build": {
+      "dependsOn": ["^build", "//#gen:proto"],
+      "inputs": [
+        "src/**",
+        "electron/**",
+        "cmd/**",
+        "internal/**",
+        "tsconfig*.json",
+        "package.json",
+        "electron.vite.config.*",
+        "vite.config.*",
+        "go.mod",
+        "go.sum"
+      ],
+      "outputs": ["dist/**", "out/**", "release/**", "relaxd"]
+    },
+    "lint": {
+      "inputs": ["src/**", "electron/**", "cmd/**", "internal/**", "*.json", "*.cjs", "*.js", "*.ts"]
+    },
+    "test": {
+      "dependsOn": ["//#gen:proto"],
+      "inputs": [
+        "src/**",
+        "cmd/**",
+        "internal/**",
+        "**/*_test.go",
+        "go.mod",
+        "go.sum"
+      ]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "dependsOn": ["//#gen:proto"]
+    }
+  },
+  "globalDependencies": ["buf.yaml", "buf.gen.yaml", ".env.example"]
+}

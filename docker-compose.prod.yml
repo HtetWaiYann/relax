@@ -1,0 +1,29 @@
+# Production environment, targeting Ubuntu (linux/amd64).
+#
+#   docker compose -f docker-compose.prod.yml build
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# The image is a distroless static binary, so no shell, no package manager,
+# and a non-root runtime user.
+
+services:
+  backend:
+    container_name: relax-backend
+    image: relax-backend:latest
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      platforms:
+        - linux/amd64
+    ports:
+      - "8080:8080"
+    env_file:
+      - ./apps/backend/.env
+    environment:
+      APP_ENV: production
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true

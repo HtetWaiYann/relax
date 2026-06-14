@@ -1,0 +1,9 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# These packages need to run install scripts to download platform binaries.
+allowBuilds:
+  '@bufbuild/buf': true
+  electron: true
+  esbuild: true

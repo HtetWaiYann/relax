@@ -1,0 +1,157 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  GO_VERSION: "1.23"
+  PNPM_VERSION: "11"
+
+jobs:
+  lint:
+    name: Lint (TS + Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: "${{ env.PNPM_VERSION }}" }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/backend/go.sum
+      - uses: bufbuild/buf-setup-action@v1
+        with: { github_token: "${{ secrets.GITHUB_TOKEN }}" }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm gen:proto
+      - name: Lint
+        run: pnpm lint
+
+  test-frontend:
+    name: Test frontend (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: "${{ env.PNPM_VERSION }}" }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - uses: bufbuild/buf-setup-action@v1
+        with: { github_token: "${{ secrets.GITHUB_TOKEN }}" }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm gen:proto
+      - name: Vitest
+        run: pnpm --filter @relax/shared-utils --filter @relax/types --filter @relax/electron test
+
+  test-backend:
+    name: Test backend (go test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/backend/go.sum
+      - uses: bufbuild/buf-setup-action@v1
+        with: { github_token: "${{ secrets.GITHUB_TOKEN }}" }
+      - run: buf generate
+      - name: go test
+        working-directory: apps/backend
+        run: go test -race -count=1 ./...
+
+  build-frontend:
+    name: Build frontend (electron-vite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: "${{ env.PNPM_VERSION }}" }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - uses: bufbuild/buf-setup-action@v1
+        with: { github_token: "${{ secrets.GITHUB_TOKEN }}" }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm gen:proto
+      - name: Typecheck
+        run: pnpm --filter @relax/electron typecheck
+      - name: Build Electron bundles
+        run: pnpm --filter @relax/electron build
+      - name: Upload renderer build
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-out
+          path: apps/electron/out
+          retention-days: 7
+
+  build-backend:
+    name: Build backend (go build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/backend/go.sum
+      - uses: bufbuild/buf-setup-action@v1
+        with: { github_token: "${{ secrets.GITHUB_TOKEN }}" }
+      - run: buf generate
+      - name: go build
+        working-directory: apps/backend
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -ldflags="-s -w" -o relaxd ./cmd/relaxd
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: relaxd-linux-amd64
+          path: apps/backend/relaxd
+          retention-days: 7
+
+  go-lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/backend/go.sum
+      - uses: bufbuild/buf-setup-action@v1
+        with: { github_token: "${{ secrets.GITHUB_TOKEN }}" }
+      - run: buf generate
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: apps/backend
+
+  docker-backend:
+    name: Build backend Docker image (linux/amd64)
+    runs-on: ubuntu-latest
+    needs: [test-backend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build prod image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/backend.Dockerfile
+          platforms: linux/amd64
+          push: false
+          tags: relax-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

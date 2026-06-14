@@ -1,0 +1,7 @@
+# Used when the build context is apps/backend/ specifically.
+gen
+relaxd
+relax.db
+tmp
+.env
+.env.*.local
