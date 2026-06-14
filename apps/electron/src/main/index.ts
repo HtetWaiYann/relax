@@ -1,6 +1,7 @@
 import { app, BrowserWindow, session, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import process from 'node:process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
