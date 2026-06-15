@@ -258,6 +258,9 @@ func (c *Client) BrowseTV(ctx context.Context, page int32, anime bool) (*relaxv1
 	if anime {
 		q.Set("with_genres", "16")
 		q.Set("with_original_language", "ja")
+		// TMDB keyword 210024 = hentai. include_adult covers porn-tagged rows,
+		// but anime 18+ usually slips through without this.
+		q.Set("without_keywords", "210024")
 		keyTag = "anime"
 	}
 	key := "discover/" + keyTag + "?page=" + strconv.Itoa(int(page))
