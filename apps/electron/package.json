@@ -20,8 +20,11 @@
     "@connectrpc/connect-web": "^2.0.1",
     "@relax/shared-utils": "workspace:*",
     "@relax/types": "workspace:*",
+    "@tanstack/react-query": "^5.101.0",
+    "lucide-react": "^1.18.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.17.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
