@@ -11,12 +11,13 @@ import (
 )
 
 type Config struct {
-	Port           int    `env:"PORT" envDefault:"8080"`
-	TMDBAPIKey     string `env:"TMDB_API_KEY"`
-	DatabaseURL    string `env:"DATABASE_URL" envDefault:"./relax.db"`
-	LogLevel       string `env:"LOG_LEVEL" envDefault:"info"`
-	AllowedOrigin  string `env:"ALLOWED_ORIGIN" envDefault:"http://localhost:5173"`
-	AppEnv         string `env:"APP_ENV" envDefault:"development"`
+	Port             int    `env:"PORT" envDefault:"8080"`
+	TMDBAPIKey       string `env:"TMDB_API_KEY"`
+	DatabaseURL      string `env:"DATABASE_URL" envDefault:"./relax.db"`
+	LogLevel         string `env:"LOG_LEVEL" envDefault:"info"`
+	AllowedOrigin    string `env:"ALLOWED_ORIGIN" envDefault:"http://localhost:5173"`
+	AppEnv           string `env:"APP_ENV" envDefault:"development"`
+	TorrentioBaseURL string `env:"TORRENTIO_BASE_URL" envDefault:"https://torrentio.strem.fun"`
 }
 
 // Load reads .env (if present) and overlays os.Environ() into a Config.

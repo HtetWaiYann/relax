@@ -10,10 +10,19 @@ import (
 
 	relaxv1 "relax/gen/relax/v1"
 	"relax/internal/metadata"
+	"relax/internal/streams"
 )
 
+type nopStreams struct{}
+
+func (nopStreams) GetStreams(_ context.Context, _ string, _ relaxv1.MediaType, _, _ *int32) ([]*relaxv1.StreamSource, error) {
+	return nil, nil
+}
+
+var _ streams.Provider = nopStreams{}
+
 func newTestServer() *RelaxServer {
-	return NewRelaxServer(slog.New(slog.NewTextHandler(io.Discard, nil)), metadata.New(""))
+	return NewRelaxServer(slog.New(slog.NewTextHandler(io.Discard, nil)), metadata.New(""), nopStreams{})
 }
 
 func TestSearchReturnsStubResults(t *testing.T) {

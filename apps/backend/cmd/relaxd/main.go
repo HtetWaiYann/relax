@@ -18,6 +18,7 @@ import (
 	"relax/internal/config"
 	"relax/internal/metadata"
 	"relax/internal/server"
+	"relax/internal/streams/torrentio"
 )
 
 func main() {
@@ -37,7 +38,8 @@ func run() error {
 	slog.SetDefault(logger)
 
 	meta := metadata.New(cfg.TMDBAPIKey)
-	relaxSrv := server.NewRelaxServer(logger, meta)
+	streamsProvider := torrentio.New(cfg.TorrentioBaseURL)
+	relaxSrv := server.NewRelaxServer(logger, meta, streamsProvider)
 	path, handler := relaxv1connect.NewRelaxServiceHandler(relaxSrv)
 
 	mux := http.NewServeMux()

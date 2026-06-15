@@ -85,7 +85,31 @@ func movieDetailToProto(d tmdbMovieDetail) *relaxv1.MediaDetail {
 		ProductionCountries: countryNames(d.ProductionCountries),
 		Cast:                topCast(d.Credits.Cast),
 		Similar:             mapSlice(d.Similar.Results, movieToSummary),
+		ImdbId:              firstNonEmpty(d.IMDBID, d.ExternalIDs.IMDBID),
 	}
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+func mapSeasons(in []tmdbSeason) []*relaxv1.SeasonInfo {
+	out := make([]*relaxv1.SeasonInfo, 0, len(in))
+	for _, s := range in {
+		// Skip season 0 (specials).
+		if s.SeasonNumber <= 0 {
+			continue
+		}
+		out = append(out, &relaxv1.SeasonInfo{
+			SeasonNumber: s.SeasonNumber,
+			Name:         s.Name,
+			EpisodeCount: s.EpisodeCount,
+		})
+	}
+	return out
 }
 
 func tvDetailToProto(d tmdbTVDetail) *relaxv1.MediaDetail {
@@ -109,6 +133,8 @@ func tvDetailToProto(d tmdbTVDetail) *relaxv1.MediaDetail {
 		ProductionCountries: countryNames(d.ProductionCountries),
 		Cast:                topCast(d.Credits.Cast),
 		Similar:             mapSlice(d.Similar.Results, tvToSummary),
+		Seasons:             mapSeasons(d.Seasons),
+		ImdbId:              d.ExternalIDs.IMDBID,
 	}
 }
 

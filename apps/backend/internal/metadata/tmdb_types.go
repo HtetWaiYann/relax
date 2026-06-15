@@ -66,22 +66,34 @@ type tmdbCredits struct {
 	Cast []tmdbCastMember `json:"cast"`
 }
 
+type tmdbExternalIDs struct {
+	IMDBID string `json:"imdb_id"`
+}
+
+type tmdbSeason struct {
+	SeasonNumber int32  `json:"season_number"`
+	Name         string `json:"name"`
+	EpisodeCount int32  `json:"episode_count"`
+}
+
 type tmdbMovieDetail struct {
-	ID                  int32                   `json:"id"`
-	Title               string                  `json:"title"`
-	PosterPath          string                  `json:"poster_path"`
-	BackdropPath        string                  `json:"backdrop_path"`
-	ReleaseDate         string                  `json:"release_date"`
-	VoteAverage         float64                 `json:"vote_average"`
-	Overview            string                  `json:"overview"`
-	Runtime             int32                   `json:"runtime"`
-	Tagline             string                  `json:"tagline"`
-	Status              string                  `json:"status"`
-	OriginalLanguage    string                  `json:"original_language"`
-	Genres              []tmdbGenre             `json:"genres"`
-	ProductionCountries []tmdbProductionCountry `json:"production_countries"`
-	Credits             tmdbCredits             `json:"credits"`
+	ID                  int32                    `json:"id"`
+	Title               string                   `json:"title"`
+	PosterPath          string                   `json:"poster_path"`
+	BackdropPath        string                   `json:"backdrop_path"`
+	ReleaseDate         string                   `json:"release_date"`
+	VoteAverage         float64                  `json:"vote_average"`
+	Overview            string                   `json:"overview"`
+	Runtime             int32                    `json:"runtime"`
+	Tagline             string                   `json:"tagline"`
+	Status              string                   `json:"status"`
+	OriginalLanguage    string                   `json:"original_language"`
+	IMDBID              string                   `json:"imdb_id"`
+	Genres              []tmdbGenre              `json:"genres"`
+	ProductionCountries []tmdbProductionCountry  `json:"production_countries"`
+	Credits             tmdbCredits              `json:"credits"`
 	Similar             tmdbPaginated[tmdbMovie] `json:"similar"`
+	ExternalIDs         tmdbExternalIDs          `json:"external_ids"`
 }
 
 type tmdbTVDetail struct {
@@ -100,6 +112,8 @@ type tmdbTVDetail struct {
 	ProductionCountries []tmdbProductionCountry `json:"production_countries"`
 	Credits             tmdbCredits             `json:"credits"`
 	Similar             tmdbPaginated[tmdbTV]   `json:"similar"`
+	Seasons             []tmdbSeason            `json:"seasons"`
+	ExternalIDs         tmdbExternalIDs         `json:"external_ids"`
 }
 
 type tmdbErrorBody struct {

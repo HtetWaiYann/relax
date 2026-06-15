@@ -11,20 +11,22 @@ import (
 	relaxv1 "relax/gen/relax/v1"
 	"relax/gen/relax/v1/relaxv1connect"
 	"relax/internal/metadata"
+	"relax/internal/streams"
 )
 
 // RelaxServer is a partial implementation of relaxv1connect.RelaxServiceHandler.
 // Metadata RPCs (GetHomeSections/SearchMedia/GetMediaDetail) use a real TMDB
 // client; torrent/storage RPCs still return stub data until those layers land.
 type RelaxServer struct {
-	logger *slog.Logger
-	meta   *metadata.Client
+	logger  *slog.Logger
+	meta    *metadata.Client
+	streams streams.Provider
 }
 
 var _ relaxv1connect.RelaxServiceHandler = (*RelaxServer)(nil)
 
-func NewRelaxServer(logger *slog.Logger, meta *metadata.Client) *RelaxServer {
-	return &RelaxServer{logger: logger, meta: meta}
+func NewRelaxServer(logger *slog.Logger, meta *metadata.Client, streamsProvider streams.Provider) *RelaxServer {
+	return &RelaxServer{logger: logger, meta: meta, streams: streamsProvider}
 }
 
 func (s *RelaxServer) Search(

@@ -178,10 +178,10 @@ func (c *Client) SearchMulti(ctx context.Context, query string, page int32) (*re
 	}, nil
 }
 
-// GetMovieDetail fetches /movie/{id}?append_to_response=credits,similar.
+// GetMovieDetail fetches /movie/{id}?append_to_response=credits,similar,external_ids.
 func (c *Client) GetMovieDetail(ctx context.Context, id int32) (*relaxv1.MediaDetail, error) {
 	key := "movie/" + strconv.Itoa(int(id))
-	q := url.Values{"append_to_response": {"credits,similar"}}
+	q := url.Values{"append_to_response": {"credits,similar,external_ids"}}
 	d, err := getCached[tmdbMovieDetail](ctx, c, key, "/movie/"+strconv.Itoa(int(id)), q)
 	if err != nil {
 		return nil, err
@@ -189,15 +189,35 @@ func (c *Client) GetMovieDetail(ctx context.Context, id int32) (*relaxv1.MediaDe
 	return movieDetailToProto(d), nil
 }
 
-// GetTVDetail fetches /tv/{id}?append_to_response=credits,similar.
+// GetTVDetail fetches /tv/{id}?append_to_response=credits,similar,external_ids.
 func (c *Client) GetTVDetail(ctx context.Context, id int32) (*relaxv1.MediaDetail, error) {
 	key := "tv/" + strconv.Itoa(int(id))
-	q := url.Values{"append_to_response": {"credits,similar"}}
+	q := url.Values{"append_to_response": {"credits,similar,external_ids"}}
 	d, err := getCached[tmdbTVDetail](ctx, c, key, "/tv/"+strconv.Itoa(int(id)), q)
 	if err != nil {
 		return nil, err
 	}
 	return tvDetailToProto(d), nil
+}
+
+// IMDBID resolves an IMDB id from a TMDB id. Hits the cached detail call.
+func (c *Client) IMDBID(ctx context.Context, mediaType relaxv1.MediaType, tmdbID int32) (string, error) {
+	switch mediaType {
+	case relaxv1.MediaType_MEDIA_TYPE_MOVIE:
+		d, err := c.GetMovieDetail(ctx, tmdbID)
+		if err != nil {
+			return "", err
+		}
+		return d.GetImdbId(), nil
+	case relaxv1.MediaType_MEDIA_TYPE_TV:
+		d, err := c.GetTVDetail(ctx, tmdbID)
+		if err != nil {
+			return "", err
+		}
+		return d.GetImdbId(), nil
+	default:
+		return "", fmt.Errorf("unsupported media type: %v", mediaType)
+	}
 }
 
 // BrowseMovies hits /discover/movie sorted by popularity, page-paginated.
