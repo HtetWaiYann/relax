@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { X, Check, ChevronRight, Download } from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
+import { X, ChevronRight, ChevronLeft, ChevronDown, Download } from 'lucide-react';
 import { MediaType, type MediaDetail, type SeasonInfo, type StreamSource } from '@relax/types';
 import { useStreams } from '../lib/queries';
 import { StreamSourceCard } from './StreamSourceCard';
@@ -79,15 +79,10 @@ function MoviePanel({ tmdbId }: { tmdbId: number }) {
 function SeriesPanel({ detail }: { detail: MediaDetail }) {
   const seasons = (detail.seasons ?? []) as SeasonInfo[];
   const tmdbId = detail.summary?.tmdbId ?? 0;
-
   const initialSeason = seasons[0]?.seasonNumber ?? 1;
-  const [season, setSeason] = useState<number>(initialSeason);
-  const [episode, setEpisode] = useState<number>(1);
 
-  useEffect(() => {
-    setSeason(initialSeason);
-    setEpisode(1);
-  }, [initialSeason]);
+  const [season, setSeason] = useState<number>(initialSeason);
+  const [selectedEpisode, setSelectedEpisode] = useState<number | null>(null);
 
   const current = seasons.find((s) => s.seasonNumber === season);
   const episodeCount = current?.episodeCount ?? 0;
@@ -96,25 +91,35 @@ function SeriesPanel({ detail }: { detail: MediaDetail }) {
     [episodeCount],
   );
 
-  const { data, isLoading, error } = useStreams(MediaType.TV, tmdbId, season, episode);
-  const streams = data?.streams ?? [];
+  if (selectedEpisode !== null) {
+    return (
+      <SeriesSourcesView
+        tmdbId={tmdbId}
+        season={season}
+        episode={selectedEpisode}
+        onBack={() => setSelectedEpisode(null)}
+      />
+    );
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {seasons.length > 0 && (
-        <div className="no-scrollbar flex gap-2 overflow-x-auto px-5 pb-3">
-          {seasons.map((s) => (
-            <FilterPill
-              key={s.seasonNumber}
-              active={s.seasonNumber === season}
-              onClick={() => {
-                setSeason(s.seasonNumber);
-                setEpisode(1);
-              }}
+        <div className="px-5 pb-3">
+          <div className="relative">
+            <select
+              value={season}
+              onChange={(e) => setSeason(Number(e.target.value))}
+              className="w-full appearance-none rounded-md border border-border-subtle bg-surface-muted/60 px-3 py-2 pr-9 text-sm text-neutral-100 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/40"
             >
-              Season {s.seasonNumber}
-            </FilterPill>
-          ))}
+              {seasons.map((s) => (
+                <option key={s.seasonNumber} value={s.seasonNumber}>
+                  {s.name || `Season ${s.seasonNumber}`}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+          </div>
         </div>
       )}
 
@@ -123,46 +128,58 @@ function SeriesPanel({ detail }: { detail: MediaDetail }) {
           <div className="px-2 py-6 text-xs text-neutral-500">No episodes listed.</div>
         ) : (
           <ul className="space-y-1.5">
-            {episodes.map((ep) => {
-              const active = ep === episode;
-              return (
-                <li key={ep}>
-                  <button
-                    type="button"
-                    onClick={() => setEpisode(ep)}
-                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition ${
-                      active
-                        ? 'bg-primary/15 ring-1 ring-primary/40'
-                        : 'hover:bg-surface-muted/60'
-                    }`}
-                  >
-                    <span
-                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
-                        active
-                          ? 'bg-primary text-white'
-                          : 'bg-surface-muted text-neutral-300'
-                      }`}
-                    >
-                      {ep < episode ? <Check className="h-3.5 w-3.5" /> : ep}
-                    </span>
-                    <span className="flex-1 truncate text-sm text-neutral-100">
-                      Episode {ep}
-                    </span>
-                    {active && <ChevronRight className="h-4 w-4 text-primary" />}
-                  </button>
-                </li>
-              );
-            })}
+            {episodes.map((ep) => (
+              <li key={ep}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedEpisode(ep)}
+                  className="group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition hover:bg-surface-muted/60"
+                >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-muted text-xs font-semibold text-neutral-300 group-hover:bg-primary group-hover:text-white">
+                    {ep}
+                  </span>
+                  <span className="flex-1 truncate text-sm text-neutral-100">
+                    Episode {ep}
+                  </span>
+                  <ChevronRight className="h-4 w-4 text-neutral-500 group-hover:text-accent" />
+                </button>
+              </li>
+            ))}
           </ul>
         )}
       </div>
+    </div>
+  );
+}
 
-      <div className="border-t border-border-subtle">
-        <div className="px-5 pt-3 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
-          Sources · S{season} E{episode}
-        </div>
-        <StreamsList isLoading={isLoading} error={error} streams={streams} maxHeight />
+function SeriesSourcesView({
+  tmdbId,
+  season,
+  episode,
+  onBack,
+}: {
+  tmdbId: number;
+  season: number;
+  episode: number;
+  onBack: () => void;
+}) {
+  const { data, isLoading, error } = useStreams(MediaType.TV, tmdbId, season, episode);
+  const streams = data?.streams ?? [];
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <button
+        type="button"
+        onClick={onBack}
+        className="mx-5 mb-2 flex items-center gap-1.5 self-start rounded-md px-2 py-1 text-xs font-medium text-neutral-300 transition hover:bg-surface-muted hover:text-neutral-100"
+      >
+        <ChevronLeft className="h-4 w-4" />
+        Back to episodes
+      </button>
+      <div className="px-5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+        Sources · S{season} E{episode}
       </div>
+      <StreamsList isLoading={isLoading} error={error} streams={streams} />
     </div>
   );
 }

@@ -20,7 +20,7 @@ export function Detail() {
       <div className="space-y-10">
         <DetailHeroSkeleton />
         <HorizontalRowSkeleton label="Cast" />
-        <HorizontalRowSkeleton label="Similar titles" />
+        <HorizontalRowSkeleton label="Similar movies" />
       </div>
     );
   }
@@ -44,8 +44,8 @@ export function Detail() {
   const rating = summary.voteAverage > 0 ? summary.voteAverage.toFixed(1) : null;
 
   return (
-    <div className="-mx-6 -mt-8 flex min-h-screen -mb-8">
-      <div className="flex-1 space-y-12 overflow-x-hidden">
+    <div className="-mt-8 -mb-8 flex min-h-screen w-screen ml-[calc(50%-50vw)]">
+      <div className="min-w-0 flex-1 space-y-12 overflow-x-hidden">
         <section className="relative h-[420px] overflow-hidden">
           {summary.backdropUrl && (
             <img
@@ -159,7 +159,7 @@ export function Detail() {
           )}
 
           {detail.similar.length > 0 && (
-            <HorizontalRow label="Similar titles">
+            <HorizontalRow label="Similar movies">
               {detail.similar.map((item) => (
                 <PosterCard key={`${item.mediaType}-${item.tmdbId}`} item={item} />
               ))}
