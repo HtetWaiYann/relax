@@ -1,5 +1,7 @@
-import { Play, ArrowUp, ArrowDown } from 'lucide-react';
+import { Play, ArrowUp, ArrowDown, AlertCircle } from 'lucide-react';
 import type { StreamSource } from '@relax/types';
+
+const LOW_SEEDER_THRESHOLD = 5;
 
 interface StreamSourceCardProps {
   stream: StreamSource;
@@ -42,6 +44,15 @@ export function StreamSourceCard({ stream, onSelect }: StreamSourceCardProps) {
             <span className="flex items-center gap-1">
               <ArrowDown className="h-3.5 w-3.5 text-neutral-500" />
               <span className="text-neutral-300">{approxLeechers(seeders)}</span>
+            </span>
+          )}
+          {seeders !== null && seeders < LOW_SEEDER_THRESHOLD && (
+            <span
+              title="Low seeders — may be slow"
+              className="flex items-center gap-1 text-amber-400/90"
+            >
+              <AlertCircle className="h-3.5 w-3.5" />
+              <span>slow</span>
             </span>
           )}
         </div>

@@ -3,6 +3,7 @@ syntax = "proto3";
 package relax.v1;
 
 import "relax/v1/media.proto";
+import "relax/v1/streams.proto";
 import "relax/v1/torrent.proto";
 import "relax/v1/watch_progress.proto";
 
@@ -128,6 +129,25 @@ message GetStreamsResponse {
   repeated StreamSource streams = 1;
 }
 
+message SearchSubtitlesRequest {
+  int32 tmdb_id = 1;
+  MediaType media_type = 2;
+  int32 season = 3;
+  int32 episode = 4;
+}
+
+message SearchSubtitlesResponse {
+  repeated SubtitleTrack tracks = 1;
+}
+
+message DownloadSubtitleRequest {
+  string track_reference = 1;
+}
+
+message DownloadSubtitleResponse {
+  string url = 1;
+}
+
 service RelaxService {
   rpc Search(SearchRequest) returns (SearchResponse);
   rpc AddTorrent(AddTorrentRequest) returns (AddTorrentResponse);
@@ -142,4 +162,6 @@ service RelaxService {
   rpc BrowseMedia(BrowseMediaRequest) returns (BrowseMediaResponse);
   rpc GetPersonDetail(GetPersonDetailRequest) returns (GetPersonDetailResponse);
   rpc GetStreams(GetStreamsRequest) returns (GetStreamsResponse);
+  rpc SearchSubtitles(SearchSubtitlesRequest) returns (SearchSubtitlesResponse);
+  rpc DownloadSubtitle(DownloadSubtitleRequest) returns (DownloadSubtitleResponse);
 }

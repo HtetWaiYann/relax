@@ -1,7 +1,10 @@
 import { useMemo, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { X, ChevronRight, ChevronLeft, ChevronDown, Download } from 'lucide-react';
 import { MediaType, type MediaDetail, type SeasonInfo, type StreamSource } from '@relax/types';
 import { useStreams } from '../lib/queries';
+import { buildMagnet } from '../lib/torrent';
+import type { WatchState } from '../pages/Watch';
 import { StreamSourceCard } from './StreamSourceCard';
 import { Skeleton } from './Skeleton';
 
@@ -15,8 +18,26 @@ type QualityFilter = (typeof QUALITY_FILTERS)[number];
 
 export function WatchSidebar({ detail, onClose }: WatchSidebarProps) {
   const summary = detail.summary;
+  const navigate = useNavigate();
   if (!summary) return null;
   const isTV = summary.mediaType === MediaType.TV;
+
+  const launch = (stream: StreamSource, seasonEp?: { season: number; episode: number }) => {
+    const state: WatchState = {
+      infoHash: stream.infoHash,
+      fileIdx: stream.fileIdx,
+      magnetUri: buildMagnet(stream.infoHash, stream.title || summary.title),
+      title: summary.title,
+      subtitle: seasonEp ? `S${seasonEp.season} · E${seasonEp.episode}` : stream.title,
+      quality: stream.quality,
+      sourceLabel: stream.sourceName,
+      tmdbId: summary.tmdbId,
+      mediaType: summary.mediaType,
+      season: seasonEp?.season ?? 0,
+      episode: seasonEp?.episode ?? 0,
+    };
+    navigate(`/watch/${stream.infoHash}`, { state });
+  };
 
   return (
     <aside className="flex h-full w-full flex-col border-l border-border-subtle bg-surface-elevated/40">
@@ -38,15 +59,21 @@ export function WatchSidebar({ detail, onClose }: WatchSidebarProps) {
       </header>
 
       {isTV ? (
-        <SeriesPanel detail={detail} />
+        <SeriesPanel detail={detail} onLaunch={launch} />
       ) : (
-        <MoviePanel tmdbId={summary.tmdbId} />
+        <MoviePanel tmdbId={summary.tmdbId} onLaunch={launch} />
       )}
     </aside>
   );
 }
 
-function MoviePanel({ tmdbId }: { tmdbId: number }) {
+function MoviePanel({
+  tmdbId,
+  onLaunch,
+}: {
+  tmdbId: number;
+  onLaunch: (s: StreamSource) => void;
+}) {
   const [filter, setFilter] = useState<QualityFilter>('All');
   const { data, isLoading, error } = useStreams(MediaType.MOVIE, tmdbId);
   const streams = data?.streams ?? [];
@@ -61,7 +88,7 @@ function MoviePanel({ tmdbId }: { tmdbId: number }) {
           </FilterPill>
         ))}
       </div>
-      <StreamsList isLoading={isLoading} error={error} streams={filtered} />
+      <StreamsList isLoading={isLoading} error={error} streams={filtered} onLaunch={onLaunch} />
       <footer className="border-t border-border-subtle px-5 py-3">
         <button
           type="button"
@@ -76,7 +103,13 @@ function MoviePanel({ tmdbId }: { tmdbId: number }) {
   );
 }
 
-function SeriesPanel({ detail }: { detail: MediaDetail }) {
+function SeriesPanel({
+  detail,
+  onLaunch,
+}: {
+  detail: MediaDetail;
+  onLaunch: (s: StreamSource, seasonEp: { season: number; episode: number }) => void;
+}) {
   const seasons = (detail.seasons ?? []) as SeasonInfo[];
   const tmdbId = detail.summary?.tmdbId ?? 0;
   const initialSeason = seasons[0]?.seasonNumber ?? 1;
@@ -98,6 +131,7 @@ function SeriesPanel({ detail }: { detail: MediaDetail }) {
         season={season}
         episode={selectedEpisode}
         onBack={() => setSelectedEpisode(null)}
+        onLaunch={(s) => onLaunch(s, { season, episode: selectedEpisode })}
       />
     );
   }
@@ -157,11 +191,13 @@ function SeriesSourcesView({
   season,
   episode,
   onBack,
+  onLaunch,
 }: {
   tmdbId: number;
   season: number;
   episode: number;
   onBack: () => void;
+  onLaunch: (s: StreamSource) => void;
 }) {
   const { data, isLoading, error } = useStreams(MediaType.TV, tmdbId, season, episode);
   const streams = data?.streams ?? [];
@@ -179,7 +215,7 @@ function SeriesSourcesView({
       <div className="px-5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
         Sources · S{season} E{episode}
       </div>
-      <StreamsList isLoading={isLoading} error={error} streams={streams} />
+      <StreamsList isLoading={isLoading} error={error} streams={streams} onLaunch={onLaunch} />
     </div>
   );
 }
@@ -189,11 +225,13 @@ function StreamsList({
   error,
   streams,
   maxHeight,
+  onLaunch,
 }: {
   isLoading: boolean;
   error: unknown;
   streams: StreamSource[];
   maxHeight?: boolean;
+  onLaunch: (s: StreamSource) => void;
 }) {
   const container = `space-y-2.5 px-5 py-3 ${
     maxHeight ? 'max-h-[42vh] overflow-y-auto' : 'min-h-0 flex-1 overflow-y-auto'
@@ -228,12 +266,11 @@ function StreamsList({
   }
   return (
     <div className={container}>
-      {streams.map((s) => (
+      {streams.map((s, i) => (
         <StreamSourceCard
-          key={`${s.infoHash}-${s.fileIdx}`}
+          key={`${s.infoHash}-${s.fileIdx}-${i}`}
           stream={s}
-          // eslint-disable-next-line no-undef
-          onSelect={(stream) => console.log('selected stream', stream)}
+          onSelect={onLaunch}
         />
       ))}
     </div>

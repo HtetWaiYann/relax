@@ -19,6 +19,7 @@ import (
 	"relax/internal/metadata"
 	"relax/internal/server"
 	"relax/internal/streams/torrentio"
+	"relax/internal/subtitles/opensubtitles"
 )
 
 func main() {
@@ -39,11 +40,22 @@ func run() error {
 
 	meta := metadata.New(cfg.TMDBAPIKey)
 	streamsProvider := torrentio.New(cfg.TorrentioBaseURL)
-	relaxSrv := server.NewRelaxServer(logger, meta, streamsProvider)
+
+	var subClient *opensubtitles.Client
+	if cfg.OpenSubtitlesAPIKey != "" {
+		subClient = opensubtitles.New(cfg.OpenSubtitlesAPIKey)
+	}
+
+	relaxSrv := server.NewRelaxServer(logger, meta, streamsProvider, subClient, cfg.SubtitleCacheDir, cfg.Port)
 	path, handler := relaxv1connect.NewRelaxServiceHandler(relaxSrv)
+
+	if err := os.MkdirAll(cfg.SubtitleCacheDir, 0o755); err != nil {
+		logger.Warn("could not create subtitle cache dir", "err", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
+	mux.Handle("/subtitles/", http.StripPrefix("/subtitles/", http.FileServer(http.Dir(cfg.SubtitleCacheDir))))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))

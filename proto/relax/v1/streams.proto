@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package relax.v1;
+
+import "relax/v1/media.proto";
+
+option go_package = "relax/gen/relax/v1;relaxv1";
+
+// StartStreamRequest is sent from the renderer to the Electron main process
+// (over the preload IPC bridge) to begin streaming a chosen torrent source.
+// media_id fields are kept so the player can associate the session with
+// watch-progress later. The contract is provider-agnostic — a future debrid
+// provider can satisfy it by returning a CDN URL in stream_url.
+message StartStreamRequest {
+  string info_hash = 1;
+  int32 file_idx = 2;
+  string magnet_uri = 3;
+  int32 tmdb_id = 4;
+  MediaType media_type = 5;
+  int32 season = 6;
+  int32 episode = 7;
+}
+
+message StartStreamResponse {
+  string stream_url = 1;
+  string torrent_name = 2;
+  string file_name = 3;
+  int64 total_size_bytes = 4;
+}
+
+message StopStreamRequest {
+  string info_hash = 1;
+}
+
+message TorrentStats {
+  string info_hash = 1;
+  int64 download_speed_bps = 2;
+  int64 upload_speed_bps = 3;
+  double progress = 4;
+  int32 num_peers = 5;
+  int32 num_seeds = 6;
+  int64 downloaded_bytes = 7;
+  double initial_buffer_progress = 8;
+  bool buffering_complete = 9;
+}
+
+message SubtitleTrack {
+  string language = 1;
+  string label = 2;
+  string url = 3;
+  string format = 4;
+  string source_name = 5;
+  string track_reference = 6;
+}
+
+message GetSubtitlesRequest {
+  string info_hash = 1;
+  int32 file_idx = 2;
+}
+
+message GetSubtitlesResponse {
+  repeated SubtitleTrack tracks = 1;
+}
+
+message SetPlaybackPositionRequest {
+  string info_hash = 1;
+  int32 file_idx = 2;
+  double position_seconds = 3;
+}
