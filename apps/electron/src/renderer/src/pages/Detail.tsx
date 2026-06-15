@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { Star, Calendar, Clock, Globe2, Play, Plus, Share2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ChevronLeft, Star, Calendar, Clock, Globe2, Play, Plus, Share2 } from 'lucide-react';
 import { mediaTypeFromRoute, useMediaDetail } from '../lib/queries';
 import { GenrePill } from '../components/GenrePill';
 import { HorizontalRow } from '../components/HorizontalRow';
@@ -13,7 +13,10 @@ export function Detail() {
   const mediaType = mediaTypeFromRoute(params.mediaType);
   const id = Number(params.id);
   const { data, isLoading, error } = useMediaDetail(mediaType, Number.isFinite(id) ? id : 0);
+  const navigate = useNavigate();
   const [watchOpen, setWatchOpen] = useState(false);
+
+  useEffect(() => { window.scrollTo(0, 0); }, [id]);
 
   if (isLoading || !data) {
     return (
@@ -56,6 +59,14 @@ export function Detail() {
             />
           )}
           <div className="absolute inset-0 bg-gradient-to-t from-surface via-surface/70 to-surface/10" />
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="absolute left-4 top-4 z-10 flex cursor-pointer items-center gap-1.5 rounded-md bg-black/40 px-3 py-2 text-sm text-white backdrop-blur-sm transition hover:bg-black/60"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Back
+          </button>
         </section>
 
         <div className="-mt-44 px-6 lg:px-10">
@@ -70,7 +81,7 @@ export function Detail() {
               <div className="hidden h-64 w-44 shrink-0 rounded-xl bg-surface-muted/40 ring-1 ring-border-subtle md:block" />
             )}
 
-            <div className="flex flex-1 flex-col gap-4 pt-32">
+            <div className="flex flex-1 flex-col gap-4 z-1">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0 space-y-2">
                   <h1 className="text-4xl font-bold tracking-tight text-white">
