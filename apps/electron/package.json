@@ -2,6 +2,7 @@
   "name": "@relax/electron",
   "version": "0.0.1",
   "private": true,
+  "productName": "Relax",
   "description": "RELAX desktop app — Electron + Vite + React renderer.",
   "main": "./out/main/index.js",
   "type": "module",
@@ -13,7 +14,8 @@
     "test": "echo \"no tests yet\" && exit 0",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
-    "typecheck": "pnpm typecheck:node && pnpm typecheck:web"
+    "typecheck": "pnpm typecheck:node && pnpm typecheck:web",
+    "postinstall": "node scripts/patch-electron-name.mjs 2>/dev/null || true"
   },
   "dependencies": {
     "@connectrpc/connect": "^2.0.1",
@@ -22,12 +24,29 @@
     "@relax/types": "workspace:*",
     "@tanstack/react-query": "^5.101.0",
     "lucide-react": "^1.18.0",
+    "mime-types": "^3.0.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^7.17.0"
+    "react-router-dom": "^7.17.0",
+    "webtorrent": "^3.0.16"
+  },
+  "build": {
+    "appId": "com.relax.app",
+    "productName": "RELAX",
+    "directories": { "output": "dist" },
+    "files": ["out/**/*"],
+    "extraResources": [
+      { "from": "resources/icon.icns", "to": "icon.icns" },
+      { "from": "resources/icon.ico",  "to": "icon.ico"  },
+      { "from": "resources/icon.png",  "to": "icon.png"  }
+    ],
+    "mac":   { "icon": "resources/icon.icns", "category": "public.app-category.entertainment" },
+    "win":   { "icon": "resources/icon.ico"  },
+    "linux": { "icon": "resources/icon.png", "category": "AudioVideo" }
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
+    "@types/mime-types": "^3.0.1",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
     "@vitejs/plugin-react": "^4.3.4",
