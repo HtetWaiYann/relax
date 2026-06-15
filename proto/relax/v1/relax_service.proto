@@ -117,6 +117,17 @@ message GetPersonDetailResponse {
   PersonDetail detail = 1;
 }
 
+message GetStreamsRequest {
+  int32 tmdb_id = 1;
+  MediaType media_type = 2;
+  int32 season = 3;
+  int32 episode = 4;
+}
+
+message GetStreamsResponse {
+  repeated StreamSource streams = 1;
+}
+
 service RelaxService {
   rpc Search(SearchRequest) returns (SearchResponse);
   rpc AddTorrent(AddTorrentRequest) returns (AddTorrentResponse);
@@ -130,4 +141,5 @@ service RelaxService {
   rpc GetMediaDetail(GetMediaDetailRequest) returns (GetMediaDetailResponse);
   rpc BrowseMedia(BrowseMediaRequest) returns (BrowseMediaResponse);
   rpc GetPersonDetail(GetPersonDetailRequest) returns (GetPersonDetailResponse);
+  rpc GetStreams(GetStreamsRequest) returns (GetStreamsResponse);
 }

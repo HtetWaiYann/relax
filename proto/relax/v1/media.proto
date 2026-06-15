@@ -68,6 +68,24 @@ message MediaDetail {
   repeated string production_countries = 8;
   repeated CastMember cast = 9;
   repeated MediaSummary similar = 10;
+  repeated SeasonInfo seasons = 11;
+  string imdb_id = 12;
+}
+
+message SeasonInfo {
+  int32 season_number = 1;
+  string name = 2;
+  int32 episode_count = 3;
+}
+
+message StreamSource {
+  string title = 1;
+  string quality = 2;
+  int64 size_bytes = 3;
+  int32 seeders = 4;
+  string info_hash = 5;
+  int32 file_idx = 6;
+  string source_name = 7;
 }
 
 message HomeSection {
