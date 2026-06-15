@@ -9,10 +9,11 @@ import (
 	"connectrpc.com/connect"
 
 	relaxv1 "relax/gen/relax/v1"
+	"relax/internal/metadata"
 )
 
 func newTestServer() *RelaxServer {
-	return NewRelaxServer(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return NewRelaxServer(slog.New(slog.NewTextHandler(io.Discard, nil)), metadata.New(""))
 }
 
 func TestSearchReturnsStubResults(t *testing.T) {

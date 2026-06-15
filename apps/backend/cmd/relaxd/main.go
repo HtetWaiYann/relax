@@ -16,6 +16,7 @@ import (
 
 	"relax/gen/relax/v1/relaxv1connect"
 	"relax/internal/config"
+	"relax/internal/metadata"
 	"relax/internal/server"
 )
 
@@ -35,7 +36,8 @@ func run() error {
 	logger := newLogger(cfg)
 	slog.SetDefault(logger)
 
-	relaxSrv := server.NewRelaxServer(logger)
+	meta := metadata.New(cfg.TMDBAPIKey)
+	relaxSrv := server.NewRelaxServer(logger, meta)
 	path, handler := relaxv1connect.NewRelaxServiceHandler(relaxSrv)
 
 	mux := http.NewServeMux()
