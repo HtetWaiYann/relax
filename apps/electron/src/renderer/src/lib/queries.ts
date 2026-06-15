@@ -7,6 +7,7 @@ const DETAIL_PREFIX = 'detail';
 const SEARCH_PREFIX = 'search';
 const BROWSE_PREFIX = 'browse';
 const PERSON_PREFIX = 'person';
+const STREAMS_PREFIX = 'streams';
 
 export function useHomeSections() {
   return useQuery({
@@ -57,6 +58,31 @@ export function useInfiniteBrowseMedia(kind: BrowseKind) {
     initialPageParam: 1,
     getNextPageParam: nextPage,
     staleTime: 5 * 60_000,
+  });
+}
+
+export function useStreams(
+  mediaType: MediaType,
+  tmdbId: number,
+  season?: number,
+  episode?: number,
+) {
+  const isTV = mediaType === MediaType.TV;
+  const ready =
+    tmdbId > 0 &&
+    mediaType !== MediaType.UNSPECIFIED &&
+    (!isTV || ((season ?? 0) > 0 && (episode ?? 0) > 0));
+  return useQuery({
+    queryKey: [STREAMS_PREFIX, mediaType, tmdbId, season ?? 0, episode ?? 0],
+    queryFn: () =>
+      relaxClient.getStreams({
+        tmdbId,
+        mediaType,
+        season: isTV ? (season ?? 0) : 0,
+        episode: isTV ? (episode ?? 0) : 0,
+      }),
+    enabled: ready,
+    staleTime: 60_000,
   });
 }
 
