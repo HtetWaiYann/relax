@@ -68,6 +68,55 @@ message TorrentProgressUpdate {
   Torrent torrent = 1;
 }
 
+message GetHomeSectionsRequest {}
+
+message GetHomeSectionsResponse {
+  repeated HomeSection sections = 1;
+  MediaDetail featured = 2;
+}
+
+message SearchMediaRequest {
+  string query = 1;
+  MediaType media_type = 2;
+  int32 page = 3;
+}
+
+message SearchMediaResponse {
+  repeated MediaSummary results = 1;
+  int32 page = 2;
+  int32 total_pages = 3;
+  int32 total_results = 4;
+}
+
+message GetMediaDetailRequest {
+  int32 tmdb_id = 1;
+  MediaType media_type = 2;
+}
+
+message GetMediaDetailResponse {
+  MediaDetail detail = 1;
+}
+
+message BrowseMediaRequest {
+  MediaType media_type = 1;
+  bool anime = 2;
+  int32 page = 3;
+}
+
+message BrowseMediaResponse {
+  repeated MediaSummary results = 1;
+  int32 page = 2;
+  int32 total_pages = 3;
+}
+
+message GetPersonDetailRequest {
+  int32 person_id = 1;
+}
+
+message GetPersonDetailResponse {
+  PersonDetail detail = 1;
+}
+
 service RelaxService {
   rpc Search(SearchRequest) returns (SearchResponse);
   rpc AddTorrent(AddTorrentRequest) returns (AddTorrentResponse);
@@ -76,4 +125,9 @@ service RelaxService {
   rpc SaveWatchProgress(SaveWatchProgressRequest) returns (SaveWatchProgressResponse);
   rpc GetWatchProgress(GetWatchProgressRequest) returns (GetWatchProgressResponse);
   rpc StreamTorrentProgress(StreamTorrentProgressRequest) returns (stream TorrentProgressUpdate);
+  rpc GetHomeSections(GetHomeSectionsRequest) returns (GetHomeSectionsResponse);
+  rpc SearchMedia(SearchMediaRequest) returns (SearchMediaResponse);
+  rpc GetMediaDetail(GetMediaDetailRequest) returns (GetMediaDetailResponse);
+  rpc BrowseMedia(BrowseMediaRequest) returns (BrowseMediaResponse);
+  rpc GetPersonDetail(GetPersonDetailRequest) returns (GetPersonDetailResponse);
 }
