@@ -11,6 +11,7 @@ import {
   ArrowUp,
   Check,
   ChevronLeft,
+  Headphones,
   Loader2,
   Maximize,
   Minimize,
@@ -34,9 +35,13 @@ import {
   type SubtitleStyle,
 } from '../lib/subtitle';
 import {
+  getStreamAudioTracks,
   getStreamSubtitles,
+  seekStreamUrl,
   setStreamPosition,
+  switchStreamAudio,
   useTorrentStats,
+  type AudioTrack,
   type SubtitleTrack,
 } from '../lib/torrent';
 import { relaxClient } from '../lib/client';
@@ -59,17 +64,32 @@ interface VideoPlayerProps {
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 const HIDE_DELAY_MS = 3000;
 
+// Order in which sourceNames appear in the subtitle menu. Empty groups are omitted.
+const SUBTITLE_GROUP_ORDER = ['Embedded', 'Embedded (MKV)', 'OpenSubtitles', 'YIFYSubs'] as const;
+
 type TrackLoadState = 'loading' | 'error' | 'quota';
+type PanelKind = 'none' | 'subs' | 'audio' | 'speed';
 
 export function VideoPlayer(props: VideoPlayerProps) {
   const {
-    infoHash, fileIdx, streamUrl, title, subtitle, quality, sourceLabel,
+    infoHash, fileIdx, streamUrl: initialStreamUrl, title, subtitle, quality, sourceLabel,
     tmdbId, mediaType, season, episode, onBack,
   } = props;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const positionThrottle = useRef<number>(0);
+
+  // The currently-served stream URL. Starts at the prop, replaced when the
+  // audio track changes or the user seeks in remux mode (the main process
+  // gives us a new URL with ?t={seconds} so <video> reloads at that offset).
+  const [streamUrl, setStreamUrl] = useState<string | undefined>(initialStreamUrl);
+  useEffect(() => setStreamUrl(initialStreamUrl), [initialStreamUrl]);
+
+  // Wall-clock time the current stream started at (in source-file seconds).
+  // In remux mode v.currentTime is 0..(remaining duration), so display time =
+  // v.currentTime + seekOffsetSeconds. In passthrough mode it stays 0.
+  const [seekOffsetSeconds, setSeekOffsetSeconds] = useState(0);
 
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -80,7 +100,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
   const [showControls, setShowControls] = useState(true);
   const [bufferedEnd, setBufferedEnd] = useState(0);
   const [rate, setRate] = useState(1);
-  const [panel, setPanel] = useState<'none' | 'subs' | 'speed'>('none');
+  const [panel, setPanel] = useState<PanelKind>('none');
   const [showStats, setShowStats] = useState(false);
   const [tracks, setTracks] = useState<SubtitleTrack[]>([]);
   const [selectedTrack, setSelectedTrack] = useState<number>(-1);
@@ -88,14 +108,24 @@ export function VideoPlayer(props: VideoPlayerProps) {
   const [reBuffering, setReBuffering] = useState(false);
   const [trackState, setTrackState] = useState<Map<number, TrackLoadState>>(new Map());
   const [videoError, setVideoError] = useState<string | null>(null);
-  const [audioTracks, setAudioTracks] = useState<Array<{id: string; label: string; language: string}>>([]);
-  const [selectedAudio, setSelectedAudio] = useState<string>('');
-  const [nativeSubTracks, setNativeSubTracks] = useState<Array<{index: number; label: string; language: string}>>([]);
-  const [selectedNativeSub, setSelectedNativeSub] = useState<number>(-1);
+  const [audioTracks, setAudioTracks] = useState<AudioTrack[]>([]);
+  const [selectedAudioId, setSelectedAudioId] = useState<string>('');
+  const [audioSwitching, setAudioSwitching] = useState(false);
 
   const stats = useTorrentStats(infoHash);
   const initialBufferReady = stats?.bufferingComplete ?? false;
   const initialBufferPct = Math.round((stats?.initialBufferProgress ?? 0) * 100);
+  const needsRemux = stats?.needsRemux ?? false;
+
+  // Always trust probe duration when available — the remux pipe's container
+  // header reports only the *remaining* duration from the seek point.
+  const effectiveDuration =
+    stats?.durationSeconds && stats.durationSeconds > 0
+      ? stats.durationSeconds
+      : Number.isFinite(duration) && duration > 0
+        ? duration
+        : 0;
+  const displayTime = Math.min(effectiveDuration || Infinity, currentTime + seekOffsetSeconds);
 
   // Only use the URL if the track has been resolved (either embedded or downloaded).
   const activeTrackUrl = selectedTrack >= 0 && !trackState.get(selectedTrack)
@@ -104,7 +134,9 @@ export function VideoPlayer(props: VideoPlayerProps) {
   const cues = useParsedVtt(activeTrackUrl);
   const activeCue = useMemo(() => activeCueAt(cues, currentTime), [cues, currentTime]);
 
-  // Load embedded subtitles once the buffer is ready, then search OpenSubtitles.
+  // Load subtitles + audio tracks once the buffer is ready. Subtitle search:
+  // local embedded (loose .srt/.vtt + MKV-extracted) first, then external
+  // providers (OpenSubtitles + YIFYSubs, aggregated by the backend).
   useEffect(() => {
     if (!initialBufferReady) return;
     void getStreamSubtitles(infoHash, fileIdx).then((embedded) => {
@@ -113,21 +145,29 @@ export function VideoPlayer(props: VideoPlayerProps) {
         void relaxClient
           .searchSubtitles({ tmdbId, mediaType, season, episode })
           .then((res) => {
-            const osTracks: SubtitleTrack[] = (res.tracks ?? []).map((t) => ({
+            const external: SubtitleTrack[] = (res.tracks ?? []).map((t) => ({
               language: t.language,
               label: t.label,
               url: t.url,
               format: t.format,
               sourceName: t.sourceName,
               trackReference: t.trackReference,
+              // External tracks are always extractable (provider downloads SRT/VTT).
+              supported: true,
             }));
-            setTracks((prev) => [...prev, ...osTracks]);
+            setTracks((prev) => [...prev, ...external]);
           })
           .catch(() => {
             // Non-critical: leave embedded-only tracks as-is.
           });
       }
     }).catch(() => setTracks([]));
+
+    void getStreamAudioTracks(infoHash, fileIdx).then((at) => {
+      setAudioTracks(at);
+      const def = at.find((a) => a.isDefault) ?? at[0];
+      if (def) setSelectedAudioId(def.id);
+    }).catch(() => setAudioTracks([]));
   }, [infoHash, fileIdx, initialBufferReady, tmdbId, mediaType, season, episode]);
 
   // Persist subtitle style.
@@ -157,6 +197,39 @@ export function VideoPlayer(props: VideoPlayerProps) {
     else void containerRef.current.requestFullscreen();
   }, []);
 
+  // togglePlay + seekTo are declared up here so the keyboard handler below
+  // can capture them; original placement was further down but TS rightly
+  // complains about temporal dead zone in the effect's deps.
+  const togglePlay = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) void v.play();
+    else v.pause();
+  }, []);
+
+  const seekTo = useCallback(
+    (t: number) => {
+      const v = videoRef.current;
+      if (!v) return;
+      const clamped = Math.max(0, Math.min(effectiveDuration || t, t));
+      setStreamPosition(infoHash, fileIdx, clamped);
+      if (needsRemux) {
+        // Remux mode: each seek is a fresh ffmpeg invocation. Swap src to
+        // /stream/.../?t={clamped} and re-anchor the display offset; the new
+        // stream itself starts at currentTime=0.
+        setSeekOffsetSeconds(clamped);
+        setCurrentTime(0);
+        setBufferedEnd(0);
+        void seekStreamUrl(infoHash, fileIdx, clamped).then((url) => {
+          if (url) setStreamUrl(url);
+        });
+        return;
+      }
+      v.currentTime = clamped;
+    },
+    [infoHash, fileIdx, needsRemux, effectiveDuration],
+  );
+
   // Keyboard shortcuts.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -168,16 +241,15 @@ export function VideoPlayer(props: VideoPlayerProps) {
         case ' ':
         case 'k':
           e.preventDefault();
-          if (v.paused) void v.play();
-          else v.pause();
+          togglePlay();
           break;
         case 'ArrowRight':
           e.preventDefault();
-          v.currentTime = Math.min(v.duration || 0, v.currentTime + 10);
+          seekTo(displayTime + 10);
           break;
         case 'ArrowLeft':
           e.preventDefault();
-          v.currentTime = Math.max(0, v.currentTime - 10);
+          seekTo(displayTime - 10);
           break;
         case 'ArrowUp':
           e.preventDefault();
@@ -201,34 +273,12 @@ export function VideoPlayer(props: VideoPlayerProps) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [wake, toggleFullscreen]);
+  }, [wake, toggleFullscreen, seekTo, displayTime]);
 
   // Track video element state.
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-
-    const readNativeTracks = () => {
-      // Audio tracks — only relevant when > 1 (single-audio files are silent upgrade).
-      const ats: Array<{id: string; label: string; language: string}> = [];
-      for (let i = 0; i < (v.audioTracks?.length ?? 0); i++) {
-        const t = v.audioTracks[i];
-        ats.push({ id: t.id || String(i), label: t.label || t.language || `Audio ${i + 1}`, language: t.language });
-        if (t.enabled) setSelectedAudio(t.id || String(i));
-      }
-      if (ats.length > 1) setAudioTracks(ats);
-
-      // Text tracks embedded in the container (MKV subtitle streams, etc).
-      const subs: Array<{index: number; label: string; language: string}> = [];
-      for (let i = 0; i < v.textTracks.length; i++) {
-        const t = v.textTracks[i];
-        if (t.kind === 'subtitles' || t.kind === 'captions') {
-          t.mode = 'hidden'; // suppress native rendering; we control display
-          subs.push({ index: i, label: t.label || t.language || `Sub ${i + 1}`, language: t.language });
-        }
-      }
-      setNativeSubTracks(subs);
-    };
 
     const onPlay = () => setPlaying(true);
     const onPause = () => {
@@ -240,7 +290,9 @@ export function VideoPlayer(props: VideoPlayerProps) {
       const now = performance.now();
       if (now - positionThrottle.current > 1500) {
         positionThrottle.current = now;
-        setStreamPosition(infoHash, fileIdx, v.currentTime);
+        // Send absolute time so webtorrent prioritises the right pieces — in
+        // remux mode v.currentTime is local to the current pipe.
+        setStreamPosition(infoHash, fileIdx, v.currentTime + seekOffsetSeconds);
       }
     };
     const onDuration = () => setDuration(v.duration || 0);
@@ -257,13 +309,20 @@ export function VideoPlayer(props: VideoPlayerProps) {
       }
     };
     const onWait = () => setReBuffering(true);
-    const onCanPlay = () => setReBuffering(false);
+    const onCanPlay = () => {
+      setReBuffering(false);
+      setAudioSwitching(false);
+    };
     const onVolume = () => {
       setVolume(v.volume);
       setMuted(v.muted);
     };
     const onRate = () => setRate(v.playbackRate);
-    const onMeta = () => { setDuration(v.duration || 0); readNativeTracks(); };
+    const onMeta = () => {
+      setDuration(v.duration || 0);
+      // After a src swap (audio change / remux seek), keep playing.
+      if (v.paused) void v.play();
+    };
     const onError = () => {
       const code = v.error?.code;
       if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
@@ -286,8 +345,6 @@ export function VideoPlayer(props: VideoPlayerProps) {
     v.addEventListener('ratechange', onRate);
     v.addEventListener('loadedmetadata', onMeta);
     v.addEventListener('error', onError);
-    // If metadata is already available (effect re-runs after video renders), read immediately.
-    if (v.readyState >= 1) readNativeTracks();
     return () => {
       v.removeEventListener('play', onPlay);
       v.removeEventListener('pause', onPause);
@@ -302,7 +359,6 @@ export function VideoPlayer(props: VideoPlayerProps) {
       v.removeEventListener('loadedmetadata', onMeta);
       v.removeEventListener('error', onError);
     };
-  // Re-run when the video element mounts (conditional on initialBufferReady/streamUrl).
   }, [infoHash, fileIdx, initialBufferReady, streamUrl]);
 
   // Fullscreen observer.
@@ -312,70 +368,48 @@ export function VideoPlayer(props: VideoPlayerProps) {
     return () => document.removeEventListener('fullscreenchange', onFs);
   }, []);
 
-  const togglePlay = useCallback(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    if (v.paused) void v.play();
-    else v.pause();
-  }, []);
-
-  const seekTo = useCallback(
-    (t: number) => {
-      const v = videoRef.current;
-      if (!v) return;
-      v.currentTime = Math.max(0, Math.min(v.duration || t, t));
-      setStreamPosition(infoHash, fileIdx, v.currentTime);
-    },
-    [infoHash, fileIdx],
-  );
-
   const setPlaybackRate = useCallback((r: number) => {
     const v = videoRef.current;
     if (!v) return;
     v.playbackRate = r;
   }, []);
 
-  const selectAudio = useCallback((id: string) => {
-    const v = videoRef.current;
-    if (!v?.audioTracks) return;
-    for (let i = 0; i < v.audioTracks.length; i++) {
-      v.audioTracks[i].enabled = (v.audioTracks[i].id || String(i)) === id;
+  const selectAudio = useCallback(async (track: AudioTrack) => {
+    if (track.id === selectedAudioId) return;
+    setSelectedAudioId(track.id);
+    setAudioSwitching(true);
+    // Resume playback from where we are now — the new ffmpeg pipe starts at
+    // displayTime, so the player keeps its apparent position.
+    const resumeAt = displayTime;
+    setSeekOffsetSeconds(resumeAt);
+    setCurrentTime(0);
+    setBufferedEnd(0);
+    const url = await switchStreamAudio(infoHash, fileIdx, track.typeIndex, resumeAt);
+    if (!url) {
+      setAudioSwitching(false);
+      return;
     }
-    setSelectedAudio(id);
-  }, []);
-
-  const selectNativeSub = useCallback((index: number) => {
-    const v = videoRef.current;
-    if (!v) return;
-    setSelectedTrack(-1);
-    setSelectedNativeSub(prev => {
-      const next = prev === index ? -1 : index;
-      for (let i = 0; i < v.textTracks.length; i++) {
-        v.textTracks[i].mode = i === next ? 'showing' : 'hidden';
-      }
-      return next;
-    });
-  }, []);
+    setStreamUrl(url);
+  }, [infoHash, fileIdx, selectedAudioId, displayTime]);
 
   const handleSelectTrack = useCallback(
     async (i: number) => {
-      // Clear any active native container text tracks.
-      const v = videoRef.current;
-      if (v) for (let j = 0; j < v.textTracks.length; j++) v.textTracks[j].mode = 'hidden';
-      setSelectedNativeSub(-1);
-
       const track = tracks[i];
       if (!track) {
         setSelectedTrack(-1);
         return;
       }
-      // Embedded or already-downloaded track: select immediately.
-      if (track.sourceName !== 'OpenSubtitles' || track.url) {
+      // Unsupported (e.g. PGS) — can't render. Click is a no-op.
+      if (track.supported === false) return;
+
+      // Already-resolved URL (loose embedded, MKV-extracted, or previously
+      // downloaded external) — select immediately.
+      if (track.url) {
         setSelectedTrack(i);
         setTrackState((prev) => { const m = new Map(prev); m.delete(i); return m; });
         return;
       }
-      // OS track: trigger download.
+      // External provider (OpenSubtitles / YIFYSubs) — lazy download.
       setSelectedTrack(i);
       setTrackState((prev) => new Map(prev).set(i, 'loading'));
       try {
@@ -435,7 +469,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
         </div>
       )}
 
-      {!playing && initialBufferReady && streamUrl && (
+      {!playing && initialBufferReady && streamUrl && !audioSwitching && (
         <button
           type="button"
           onClick={togglePlay}
@@ -477,9 +511,9 @@ export function VideoPlayer(props: VideoPlayerProps) {
         </div>
       </header>
 
-      {reBuffering && initialBufferReady && (
+      {(reBuffering || audioSwitching) && initialBufferReady && (
         <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/70 px-4 py-2 text-xs text-neutral-200 ring-1 ring-white/10">
-          Buffering…
+          {audioSwitching ? 'Switching audio…' : 'Buffering…'}
         </div>
       )}
 
@@ -492,12 +526,14 @@ export function VideoPlayer(props: VideoPlayerProps) {
           style={style}
           onStyleChange={setStyle}
           onClose={() => setPanel('none')}
-          audioTracks={audioTracks}
-          selectedAudio={selectedAudio}
-          onSelectAudio={selectAudio}
-          nativeSubTracks={nativeSubTracks}
-          selectedNativeSub={selectedNativeSub}
-          onSelectNativeSub={selectNativeSub}
+        />
+      )}
+      {panel === 'audio' && (
+        <AudioPanel
+          tracks={audioTracks}
+          selectedId={selectedAudioId}
+          onSelect={(t) => void selectAudio(t)}
+          onClose={() => setPanel('none')}
         />
       )}
       {panel === 'speed' && (
@@ -518,13 +554,13 @@ export function VideoPlayer(props: VideoPlayerProps) {
         }`}
       >
         <ProgressBar
-          current={currentTime}
-          duration={duration}
-          buffered={bufferedEnd}
+          current={displayTime}
+          duration={effectiveDuration}
+          buffered={bufferedEnd + seekOffsetSeconds}
           onSeek={seekTo}
         />
         <div className="mt-2 flex items-center gap-3">
-          <IconButton onClick={() => seekTo(currentTime - 10)} aria-label="Skip back">
+          <IconButton onClick={() => seekTo(displayTime - 10)} aria-label="Skip back">
             <SkipBack className="h-4 w-4" />
           </IconButton>
           <button
@@ -539,7 +575,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
               <Play className="h-5 w-5 fill-white" />
             )}
           </button>
-          <IconButton onClick={() => seekTo(currentTime + 10)} aria-label="Skip forward">
+          <IconButton onClick={() => seekTo(displayTime + 10)} aria-label="Skip forward">
             <SkipForward className="h-4 w-4" />
           </IconButton>
           <VolumeControl
@@ -556,7 +592,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
             }}
           />
           <span className="text-xs tabular-nums text-neutral-300">
-            {fmtTime(currentTime)} / {fmtTime(duration)}
+            {fmtTime(displayTime)} / {fmtTime(effectiveDuration)}
           </span>
           <div className="flex-1" />
           <button
@@ -574,11 +610,22 @@ export function VideoPlayer(props: VideoPlayerProps) {
             <span className="text-neutral-400">·</span>
             <span className="text-neutral-200">{fmtSpeed(stats?.downloadSpeedBps ?? 0)}</span>
           </button>
+          {audioTracks.length > 1 && (
+            <button
+              type="button"
+              onClick={() => setPanel(panel === 'audio' ? 'none' : 'audio')}
+              className="flex cursor-pointer items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-neutral-200 transition hover:bg-white/10"
+              aria-label="Audio track"
+            >
+              <Headphones className="h-4 w-4" />
+              <span>{audioTracks.find((a) => a.id === selectedAudioId)?.language?.toUpperCase() ?? 'Audio'}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setPanel(panel === 'subs' ? 'none' : 'subs')}
             className="flex cursor-pointer items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-neutral-200 transition hover:bg-white/10"
-            aria-label="Subtitles & playback"
+            aria-label="Subtitles"
           >
             <Subtitles className="h-4 w-4" />
             <span>
@@ -589,7 +636,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
             type="button"
             onClick={() => setPanel(panel === 'speed' ? 'none' : 'speed')}
             className="flex cursor-pointer items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-neutral-200 transition hover:bg-white/10"
-            aria-label="Subtitle style"
+            aria-label="Playback speed"
           >
             <Settings className="h-4 w-4" />
             <span>{rate}×</span>
@@ -788,12 +835,6 @@ function SubtitlesPanel({
   style,
   onStyleChange,
   onClose,
-  audioTracks,
-  selectedAudio,
-  onSelectAudio,
-  nativeSubTracks,
-  selectedNativeSub,
-  onSelectNativeSub,
 }: {
   tracks: SubtitleTrack[];
   selected: number;
@@ -802,18 +843,21 @@ function SubtitlesPanel({
   style: SubtitleStyle;
   onStyleChange: (s: SubtitleStyle) => void;
   onClose: () => void;
-  audioTracks: Array<{id: string; label: string; language: string}>;
-  selectedAudio: string;
-  onSelectAudio: (id: string) => void;
-  nativeSubTracks: Array<{index: number; label: string; language: string}>;
-  selectedNativeSub: number;
-  onSelectNativeSub: (index: number) => void;
 }) {
   const [view, setView] = useState<'tracks' | 'style'>('tracks');
-  const bundledSubs = tracks.map((t, i) => ({ t, i })).filter(({ t }) => t.sourceName !== 'OpenSubtitles');
-  const openSubs = tracks.map((t, i) => ({ t, i })).filter(({ t }) => t.sourceName === 'OpenSubtitles');
   const quotaHit = [...trackState.values()].some((s) => s === 'quota');
-  const noSubs = nativeSubTracks.length === 0 && tracks.length === 0;
+
+  // Group tracks by sourceName. Unknown sources fall under "Other" at the end.
+  const byGroup = new Map<string, Array<{ t: SubtitleTrack; i: number }>>();
+  tracks.forEach((t, i) => {
+    const arr = byGroup.get(t.sourceName) ?? [];
+    arr.push({ t, i });
+    byGroup.set(t.sourceName, arr);
+  });
+  const orderedGroups = [
+    ...SUBTITLE_GROUP_ORDER.map((k) => [k, byGroup.get(k) ?? []] as const).filter(([, v]) => v.length > 0),
+    ...[...byGroup.entries()].filter(([k]) => !(SUBTITLE_GROUP_ORDER as readonly string[]).includes(k)),
+  ];
 
   return (
     <div className="pointer-events-auto absolute bottom-20 right-4 z-20 w-72 rounded-xl border border-white/10 bg-surface-elevated/95 p-4 shadow-2xl">
@@ -831,48 +875,28 @@ function SubtitlesPanel({
 
       {view === 'tracks' ? (
         <div className="space-y-3">
-          {/* Subtitle tracks */}
-          <ul className="space-y-1">
-            <PanelOption active={selected === -1 && selectedNativeSub === -1} onClick={() => onSelect(-1)}>Off</PanelOption>
+          <ul className="max-h-96 space-y-1 overflow-y-auto pr-1">
+            <PanelOption active={selected === -1} onClick={() => onSelect(-1)}>Off</PanelOption>
 
-            {nativeSubTracks.length > 0 && (
-              <>
-                <li className="px-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">Embedded</li>
-                {nativeSubTracks.map(({ index, label, language }) => (
-                  <li key={`native-${index}`}>
-                    <button type="button" onClick={() => onSelectNativeSub(index)}
-                      className={`flex w-full cursor-pointer items-center justify-between rounded-md px-3 py-2 text-sm transition ${
-                        selectedNativeSub === index ? 'bg-primary/15 text-accent-light ring-1 ring-primary/30' : 'text-neutral-200 hover:bg-white/5'
-                      }`}>
-                      <span>{label || language}</span>
-                      {selectedNativeSub === index && <Check className="h-4 w-4 text-accent" />}
-                    </button>
-                  </li>
-                ))}
-              </>
-            )}
-
-            {bundledSubs.length > 0 && (
-              <>
+            {orderedGroups.map(([groupName, items]) => (
+              <div key={groupName}>
                 <li className="px-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
-                  {nativeSubTracks.length > 0 ? 'Bundled' : 'Embedded'}
+                  {groupName}
                 </li>
-                {bundledSubs.map(({ t, i }) => (
-                  <TrackOption key={`bundled-${i}`} track={t} index={i} selected={selected} loadState={trackState.get(i)} onSelect={onSelect} />
+                {items.map(({ t, i }) => (
+                  <TrackOption
+                    key={`${groupName}-${t.trackReference || i}`}
+                    track={t}
+                    index={i}
+                    selected={selected}
+                    loadState={trackState.get(i)}
+                    onSelect={onSelect}
+                  />
                 ))}
-              </>
-            )}
+              </div>
+            ))}
 
-            {openSubs.length > 0 && (
-              <>
-                <li className="px-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">OpenSubtitles</li>
-                {openSubs.map(({ t, i }) => (
-                  <TrackOption key={`os-${t.trackReference}`} track={t} index={i} selected={selected} loadState={trackState.get(i)} onSelect={onSelect} />
-                ))}
-              </>
-            )}
-
-            {noSubs && (
+            {tracks.length === 0 && (
               <li className="px-3 py-2 text-xs text-neutral-500">No subtitles available.</li>
             )}
           </ul>
@@ -886,24 +910,6 @@ function SubtitlesPanel({
           <button type="button" onClick={() => setView('style')} className="cursor-pointer text-xs text-accent hover:text-accent-light">
             Customize subtitle style →
           </button>
-
-          {/* Audio tracks — only shown for multi-audio files (MKV etc) */}
-          {audioTracks.length > 1 && (
-            <div className="space-y-1 border-t border-white/10 pt-3">
-              <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">Audio</div>
-              {audioTracks.map((at) => (
-                <li key={at.id} className="list-none">
-                  <button type="button" onClick={() => onSelectAudio(at.id)}
-                    className={`flex w-full cursor-pointer items-center justify-between rounded-md px-3 py-2 text-sm transition ${
-                      selectedAudio === at.id ? 'bg-primary/15 text-accent-light ring-1 ring-primary/30' : 'text-neutral-200 hover:bg-white/5'
-                    }`}>
-                    <span>{at.label || at.language}</span>
-                    {selectedAudio === at.id && <Check className="h-4 w-4 text-accent" />}
-                  </button>
-                </li>
-              ))}
-            </div>
-          )}
         </div>
       ) : (
         <div className="space-y-4">
@@ -945,6 +951,52 @@ function SubtitlesPanel({
   );
 }
 
+function AudioPanel({
+  tracks,
+  selectedId,
+  onSelect,
+  onClose,
+}: {
+  tracks: AudioTrack[];
+  selectedId: string;
+  onSelect: (t: AudioTrack) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="pointer-events-auto absolute bottom-20 right-4 z-20 w-72 rounded-xl border border-white/10 bg-surface-elevated/95 p-4 shadow-2xl">
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Audio</span>
+        <button type="button" onClick={onClose} className="cursor-pointer text-neutral-400 hover:text-neutral-100">×</button>
+      </div>
+      <ul className="space-y-1">
+        {tracks.map((t) => {
+          const active = t.id === selectedId;
+          return (
+            <li key={t.id}>
+              <button
+                type="button"
+                onClick={() => onSelect(t)}
+                className={`flex w-full cursor-pointer items-center justify-between rounded-md px-3 py-2 text-sm transition ${
+                  active ? 'bg-primary/15 text-accent-light ring-1 ring-primary/30' : 'text-neutral-200 hover:bg-white/5'
+                }`}
+              >
+                <span className="text-left">
+                  <span className="block">{t.label}</span>
+                  {t.isDefault && <span className="text-[10px] uppercase text-neutral-500">Default</span>}
+                </span>
+                {active && <Check className="h-4 w-4 text-accent" />}
+              </button>
+            </li>
+          );
+        })}
+        {tracks.length === 0 && (
+          <li className="px-3 py-2 text-xs text-neutral-500">No audio tracks detected.</li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
 function TrackOption({
   track,
   index,
@@ -961,20 +1013,27 @@ function TrackOption({
   const isActive = selected === index;
   const isLoading = loadState === 'loading';
   const isError = loadState === 'error';
+  const isUnsupported = track.supported === false;
+  const disabled = isLoading || isUnsupported;
 
   return (
     <li>
       <button
         type="button"
         onClick={() => onSelect(index)}
-        disabled={isLoading}
+        disabled={disabled}
         className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition ${
           isActive
             ? 'bg-primary/15 text-accent-light ring-1 ring-primary/30'
-            : 'text-neutral-200 hover:bg-white/5'
-        } ${isLoading ? 'cursor-wait opacity-70' : 'cursor-pointer'}`}
+            : isUnsupported
+              ? 'text-neutral-500'
+              : 'text-neutral-200 hover:bg-white/5'
+        } ${isLoading ? 'cursor-wait opacity-70' : isUnsupported ? 'cursor-not-allowed' : 'cursor-pointer'}`}
       >
-        <span>{track.label}</span>
+        <span className="truncate text-left">
+          {track.label}
+          {isUnsupported && <span className="ml-2 text-[10px] uppercase">(not supported)</span>}
+        </span>
         <span className="ml-2 shrink-0">
           {isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />}
           {isError && (

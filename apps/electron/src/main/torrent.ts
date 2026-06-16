@@ -4,13 +4,25 @@
 // provider can satisfy the same start/stop/stats/subtitles contract.
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, ipcMain, type WebContents } from 'electron';
 import process from 'node:process';
 import mime from 'mime-types';
 // @ts-expect-error — webtorrent ships no types
 import WebTorrent from 'webtorrent';
+import {
+  audioNeedsTranscode,
+  audioStreams,
+  pickDefaultAudio,
+  probeFile,
+  spawnRemux,
+  spawnSubtitleExtract,
+  subtitleIsExtractable,
+  subtitleStreams,
+  type ProbeResult,
+  type ProbeStream,
+} from './ffmpeg';
 
 const STREAM_PORT = Number(process.env['STREAM_PORT'] ?? 8088);
 const KEEP_DOWNLOADS = process.env['KEEP_DOWNLOADS'] !== 'false';
@@ -41,6 +53,12 @@ interface Stats {
   downloadedBytes: number;
   initialBufferProgress: number;
   bufferingComplete: boolean;
+  // Probe-derived. Both 0 until the initial buffer is drained and ffprobe
+  // returns. The renderer uses durationSeconds as a fallback when the live
+  // remux pipe doesn't carry duration in its container header, and needsRemux
+  // tells the UI which seek strategy to use.
+  durationSeconds: number;
+  needsRemux: boolean;
 }
 
 interface Subtitle {
@@ -48,13 +66,34 @@ interface Subtitle {
   label: string;
   url: string;
   format: string;
+  sourceName: string;
+  trackReference: string;
+  supported: boolean;
+}
+
+interface AudioTrack {
+  // Stable id = source stream index in the container.
+  id: string;
+  // 0-based position among audio streams; used for -map 0:a:N.
+  typeIndex: number;
+  language: string;
+  label: string;
+  codec: string;
+  channels: number;
+  isDefault: boolean;
 }
 
 interface Session {
   fileIdx: number;
+  filePath: string;
   initialDownloaded: number;
   bufferingComplete: boolean;
   statsTimer?: NodeJS.Timeout;
+  probe: ProbeResult | null;
+  probePromise?: Promise<void>;
+  selectedAudioTypeIdx: number;
+  // Cache: subtitle typeIdx -> extracted VTT text.
+  mkvSubCache: Map<number, string>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -115,6 +154,12 @@ function selectOnly(torrent: TorrentLike, fileIdx: number) {
   });
 }
 
+function absoluteFilePath(torrent: TorrentLike, file: FileLike): string {
+  // webtorrent stores all files under torrent.path joined with file.path
+  // (file.path is the relative path within the torrent).
+  return join(torrent.path ?? downloadDir, file.path ?? file.name);
+}
+
 // ponytail: drain a leading read-stream to force the first N bytes to download
 // sequentially. Browser range requests later pull on demand, which webtorrent
 // turns into piece criticals — so the look-ahead window follows playback.
@@ -128,17 +173,49 @@ function primeInitialBuffer(file: FileLike, sess: Session, onUpdate: () => void)
   stream.on('end', () => {
     sess.bufferingComplete = true;
     onUpdate();
+    // Kick off the probe once we have enough header on disk.
+    void ensureProbe(sess);
   });
   stream.on('error', (err: Error) => {
     console.warn('[torrent] prebuffer error', err);
     sess.bufferingComplete = true;
     onUpdate();
+    void ensureProbe(sess);
   });
+}
+
+async function ensureProbe(sess: Session): Promise<void> {
+  if (sess.probe || sess.probePromise) {
+    if (sess.probePromise) await sess.probePromise;
+    return;
+  }
+  sess.probePromise = (async () => {
+    if (!existsSync(sess.filePath)) {
+      console.warn('[ffmpeg] probe skipped — file path missing', sess.filePath);
+      return;
+    }
+    const probe = await probeFile(sess.filePath);
+    sess.probe = probe;
+    const def = pickDefaultAudio(probe);
+    if (def) sess.selectedAudioTypeIdx = def.typeIndex;
+    if (probe) {
+      const audio = audioStreams(probe);
+      const needsTranscode = audio.some((a) => audioNeedsTranscode(a.codecName));
+      console.log(
+        `[ffmpeg] probe ${sess.filePath} — duration=${probe.durationSeconds.toFixed(0)}s ` +
+        `audio=[${audio.map((a) => `${a.codecName}/${a.language || '?'}`).join(',')}] ` +
+        `transcode=${needsTranscode}`,
+      );
+    }
+  })();
+  try { await sess.probePromise; } finally { sess.probePromise = undefined; }
 }
 
 function buildStats(torrent: TorrentLike, sess: Session): Stats {
   const totalNeeded = Math.min(INITIAL_BUFFER_BYTES, fileFor(torrent, sess.fileIdx)?.length ?? 0);
   const initial = totalNeeded > 0 ? Math.min(1, sess.initialDownloaded / totalNeeded) : 1;
+  const audios = audioStreams(sess.probe);
+  const selectedAudio = audios.find((a) => a.typeIndex === sess.selectedAudioTypeIdx);
   return {
     infoHash: torrent.infoHash,
     downloadSpeedBps: Math.round(torrent.downloadSpeed ?? 0),
@@ -150,6 +227,8 @@ function buildStats(torrent: TorrentLike, sess: Session): Stats {
     downloadedBytes: Number(torrent.downloaded ?? 0),
     initialBufferProgress: initial,
     bufferingComplete: sess.bufferingComplete,
+    durationSeconds: sess.probe?.durationSeconds ?? 0,
+    needsRemux: !!sess.probe && audioNeedsTranscode(selectedAudio?.codecName),
   };
 }
 
@@ -189,7 +268,15 @@ async function start(args: StartArgs): Promise<StartResult> {
 
   let sess = sessions.get(args.infoHash);
   if (!sess) {
-    sess = { fileIdx, initialDownloaded: 0, bufferingComplete: false };
+    sess = {
+      fileIdx,
+      filePath: absoluteFilePath(torrent, file),
+      initialDownloaded: 0,
+      bufferingComplete: false,
+      probe: null,
+      selectedAudioTypeIdx: 0,
+      mkvSubCache: new Map(),
+    };
     sessions.set(args.infoHash, sess);
     const tick = () => broadcastStats(args.infoHash, buildStats(torrent, sess!));
     sess.statsTimer = setInterval(tick, STATS_INTERVAL_MS);
@@ -225,10 +312,9 @@ async function setPosition(infoHash: string, fileIdx: number, positionSeconds: n
   const t = await getTorrent(infoHash);
   const file = t ? fileFor(t, fileIdx) : null;
   if (!t || !file) return;
-  // Rough bytes-per-second from runtime-best-guess (we don't have bitrate);
-  // pick a generous 30s slice and ask webtorrent to grab those pieces first.
   if (positionSeconds < 0 || !Number.isFinite(positionSeconds)) return;
-  const totalSeconds = guessDurationSeconds(file);
+  const sess = sessions.get(infoHash);
+  const totalSeconds = sess?.probe?.durationSeconds ?? guessDurationSeconds(file);
   if (totalSeconds <= 0) return;
   const bytesPerSec = file.length / totalSeconds;
   const startByte = Math.max(0, Math.floor(positionSeconds * bytesPerSec));
@@ -258,7 +344,6 @@ function findSubtitleFiles(torrent: TorrentLike, videoIdx: number): Subtitle[] {
     // only one video and one subtitle in the torrent.
     const base = lower.replace(/\.[^.]+$/, '');
     if (videoName && base.indexOf(videoName.slice(0, 12)) === -1) {
-      // still allow if it's the only subtitle present
       if (torrent.files.filter((x: FileLike) => /\.(srt|vtt)$/i.test(x.name)).length > 1) return;
     }
     const lang = guessLang(f.name);
@@ -271,6 +356,7 @@ function findSubtitleFiles(torrent: TorrentLike, videoIdx: number): Subtitle[] {
       format: fmt,
       sourceName: 'Embedded',
       trackReference: url,
+      supported: true,
     });
   });
   return out;
@@ -281,11 +367,82 @@ function guessLang(name: string): string {
   return m ? m[1].toLowerCase() : 'en';
 }
 
+// MKV-embedded subtitle streams discovered via ffprobe. Text-based formats
+// (subrip/ass/ssa/webvtt) get a working URL backed by an ffmpeg extract;
+// bitmap formats (PGS/HDMV) are returned with supported=false.
+function mkvEmbeddedSubs(infoHash: string, sess: Session): Subtitle[] {
+  const subs = subtitleStreams(sess.probe);
+  return subs.map((s) => {
+    const lang = (s.language || 'und').toLowerCase();
+    const label = displayLabel(s, lang);
+    const extractable = subtitleIsExtractable(s.codecName);
+    return {
+      language: lang,
+      label: `${label} · ${s.codecName.toUpperCase()}`,
+      url: extractable
+        ? `http://localhost:${STREAM_PORT}/mkvsub/${infoHash}/${sess.fileIdx}/${s.typeIndex}.vtt`
+        : '',
+      format: extractable ? 'vtt' : s.codecName,
+      sourceName: 'Embedded (MKV)',
+      trackReference: `mkv:${infoHash}:${sess.fileIdx}:${s.typeIndex}`,
+      supported: extractable,
+    };
+  });
+}
+
+function displayLabel(s: ProbeStream, lang: string): string {
+  if (s.title) return s.title;
+  if (lang && lang !== 'und') return lang.toUpperCase();
+  return `Track ${s.typeIndex + 1}`;
+}
+
 async function getSubtitles(infoHash: string, fileIdx: number): Promise<Subtitle[]> {
   const t = await getTorrent(infoHash);
   if (!t) return [];
   await waitReady(t);
-  return findSubtitleFiles(t, fileIdx);
+  const loose = findSubtitleFiles(t, fileIdx);
+  const sess = sessions.get(infoHash);
+  if (!sess) return loose;
+  // Probe may still be in flight; await it so callers see the full list.
+  await ensureProbe(sess);
+  return [...loose, ...mkvEmbeddedSubs(infoHash, sess)];
+}
+
+async function getAudioTracks(infoHash: string, fileIdx: number): Promise<AudioTrack[]> {
+  const sess = sessions.get(infoHash);
+  if (!sess || sess.fileIdx !== fileIdx) return [];
+  await ensureProbe(sess);
+  return audioStreams(sess.probe).map((a) => ({
+    id: String(a.index),
+    typeIndex: a.typeIndex,
+    language: (a.language || 'und').toLowerCase(),
+    label: a.title || `${(a.language || 'und').toUpperCase()} (${a.codecName}${a.channels ? ` ${a.channels}ch` : ''})`,
+    codec: a.codecName,
+    channels: a.channels ?? 0,
+    isDefault: a.isDefault,
+  }));
+}
+
+function streamURL(infoHash: string, fileIdx: number, atSeconds: number): string {
+  const t = Math.max(0, atSeconds || 0).toFixed(3);
+  return `http://localhost:${STREAM_PORT}/stream/${infoHash}/${fileIdx}?t=${t}&_=${Date.now()}`;
+}
+
+async function switchAudioTrack(infoHash: string, fileIdx: number, typeIndex: number, atSeconds: number): Promise<{ streamUrl: string }> {
+  const sess = sessions.get(infoHash);
+  if (!sess || sess.fileIdx !== fileIdx) {
+    return { streamUrl: `http://localhost:${STREAM_PORT}/stream/${infoHash}/${fileIdx}` };
+  }
+  await ensureProbe(sess);
+  const audios = audioStreams(sess.probe);
+  if (audios.find((a) => a.typeIndex === typeIndex)) {
+    sess.selectedAudioTypeIdx = typeIndex;
+  }
+  return { streamUrl: streamURL(infoHash, fileIdx, atSeconds) };
+}
+
+async function seekStream(infoHash: string, fileIdx: number, atSeconds: number): Promise<{ streamUrl: string }> {
+  return { streamUrl: streamURL(infoHash, fileIdx, atSeconds) };
 }
 
 // ---------- HTTP server (range + subtitles) ----------
@@ -319,7 +476,12 @@ async function readFileToBuffer(file: FileLike): Promise<Buffer> {
   });
 }
 
-async function handleStream(req: IncomingMessage, res: ServerResponse, infoHash: string, fileIdx: number) {
+async function handleStream(
+  req: IncomingMessage,
+  res: ServerResponse,
+  infoHash: string,
+  fileIdx: number,
+) {
   const t = await getTorrent(infoHash);
   const file = t ? fileFor(t, fileIdx) : null;
   if (!file) {
@@ -327,32 +489,89 @@ async function handleStream(req: IncomingMessage, res: ServerResponse, infoHash:
     res.end('not found');
     return;
   }
-  const size = file.length;
-  const contentType = mime.lookup(file.name) || 'video/mp4';
-  const range = parseRange(req.headers.range, size);
+  const sess = sessions.get(infoHash);
+  // Probe may be still in flight; only block remux paths on it.
+  if (sess && !sess.probe) await ensureProbe(sess);
 
-  if (!range) {
-    res.writeHead(200, {
-      'Content-Length': size,
-      'Content-Type': contentType,
+  const audios = audioStreams(sess?.probe ?? null);
+  const selectedAudio = audios.find((a) => a.typeIndex === (sess?.selectedAudioTypeIdx ?? 0));
+  const transcodeAudio = audioNeedsTranscode(selectedAudio?.codecName);
+  const audioOverride = !!sess?.probe
+    && audios.length > 1
+    && sess.selectedAudioTypeIdx !== (pickDefaultAudio(sess.probe)?.typeIndex ?? 0);
+  const remux = !!sess?.probe && (transcodeAudio || audioOverride);
+
+  const size = file.length;
+  const contentType = remux ? 'video/mp4' : (mime.lookup(file.name) || 'video/mp4');
+  const range = parseRange(req.headers.range, size);
+  // ?t={seconds} overrides byte-range math — used by the renderer to seek in
+  // remux mode where Chromium can't compute byte offsets natively.
+  const tMatch = /[?&]t=([0-9.]+)/.exec(req.url ?? '');
+  const explicitStartSeconds = tMatch ? Math.max(0, parseFloat(tMatch[1])) : null;
+
+  console.log(
+    `[stream] ${req.method} ${req.url} range=${req.headers.range ?? 'none'} ` +
+    `mode=${remux ? 'remux' : 'passthrough'} audio=${sess?.selectedAudioTypeIdx ?? 0}`,
+  );
+
+  if (!remux) {
+    if (!range) {
+      res.writeHead(200, {
+        'Content-Length': size,
+        'Content-Type': contentType,
+        'Accept-Ranges': 'bytes',
+      });
+      const stream = file.createReadStream();
+      stream.pipe(res);
+      req.on('close', () => stream.destroy());
+      return;
+    }
+    res.writeHead(206, {
+      'Content-Range': `bytes ${range.start}-${range.end}/${size}`,
       'Accept-Ranges': 'bytes',
+      'Content-Length': range.end - range.start + 1,
+      'Content-Type': contentType,
     });
-    const stream = file.createReadStream();
+    const stream = file.createReadStream({ start: range.start, end: range.end });
     stream.pipe(res);
     req.on('close', () => stream.destroy());
     return;
   }
 
-  const { start, end } = range;
-  res.writeHead(206, {
-    'Content-Range': `bytes ${start}-${end}/${size}`,
+  // Remux path. Two ways the renderer can ask for a seek:
+  //   1) ?t={seconds} — explicit time offset (used by the UI's seek-bar swap)
+  //   2) Range: bytes=N- — Chromium's native byte-offset seek; we map back
+  //      to time via probe duration ratio.
+  const duration = sess?.probe?.durationSeconds ?? 0;
+  const start = range?.start ?? 0;
+  const rangeStartSeconds = duration > 0 ? (start / size) * duration : 0;
+  const startSeconds = explicitStartSeconds ?? rangeStartSeconds;
+
+  // Live remux: chunked transfer, no Content-Length. Telling Chromium a fake
+  // total would make it report a truncated download when ffmpeg's output
+  // doesn't match the lie. Accept-Ranges left at "bytes" so the player can
+  // still request bytes=0- on the initial request.
+  res.writeHead(200, {
     'Accept-Ranges': 'bytes',
-    'Content-Length': end - start + 1,
     'Content-Type': contentType,
+    'Cache-Control': 'no-store',
   });
-  const stream = file.createReadStream({ start, end });
-  stream.pipe(res);
-  req.on('close', () => stream.destroy());
+
+  const ff = spawnRemux({
+    filePath: sess!.filePath,
+    audioTypeIdx: sess?.selectedAudioTypeIdx ?? 0,
+    startSeconds,
+    transcodeAudio,
+  });
+  ff.stderr.on('data', (chunk: Buffer) => {
+    // Only log warnings/errors — at -loglevel warning these are sparse.
+    const s = chunk.toString().trim();
+    if (s) console.log(`[ffmpeg] ${s}`);
+  });
+  ff.stdout.pipe(res);
+  const kill = () => { try { ff.kill('SIGKILL'); } catch { /* noop */ } };
+  req.on('close', kill);
+  ff.on('error', (err) => { console.warn('[ffmpeg] spawn failed', err); kill(); });
 }
 
 async function handleSubtitle(res: ServerResponse, infoHash: string, fileIdx: number) {
@@ -380,6 +599,65 @@ async function handleSubtitle(res: ServerResponse, infoHash: string, fileIdx: nu
   }
 }
 
+async function handleMkvSubtitle(
+  res: ServerResponse,
+  infoHash: string,
+  fileIdx: number,
+  streamTypeIdx: number,
+) {
+  const sess = sessions.get(infoHash);
+  if (!sess || sess.fileIdx !== fileIdx) {
+    res.writeHead(404);
+    res.end('no session');
+    return;
+  }
+  await ensureProbe(sess);
+  const sub = subtitleStreams(sess.probe).find((s) => s.typeIndex === streamTypeIdx);
+  if (!sub || !subtitleIsExtractable(sub.codecName)) {
+    res.writeHead(415);
+    res.end('subtitle stream not extractable');
+    return;
+  }
+  const cached = sess.mkvSubCache.get(streamTypeIdx);
+  if (cached !== undefined) {
+    res.writeHead(200, {
+      'Content-Type': 'text/vtt; charset=utf-8',
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'public, max-age=3600',
+    });
+    res.end(cached);
+    return;
+  }
+
+  const ff = spawnSubtitleExtract(sess.filePath, streamTypeIdx);
+  const chunks: Buffer[] = [];
+  ff.stdout.on('data', (c: Buffer) => chunks.push(c));
+  ff.stderr.on('data', (c: Buffer) => {
+    const s = c.toString().trim();
+    if (s) console.log(`[ffmpeg-sub] ${s}`);
+  });
+  ff.on('close', (code) => {
+    if (code !== 0 && chunks.length === 0) {
+      res.writeHead(500);
+      res.end('subtitle extract failed');
+      return;
+    }
+    const vtt = Buffer.concat(chunks).toString('utf8');
+    sess.mkvSubCache.set(streamTypeIdx, vtt);
+    res.writeHead(200, {
+      'Content-Type': 'text/vtt; charset=utf-8',
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'public, max-age=3600',
+    });
+    res.end(vtt);
+  });
+  ff.on('error', (err) => {
+    console.warn('[ffmpeg-sub] spawn failed', err);
+    res.writeHead(500);
+    res.end('subtitle extract spawn failed');
+  });
+}
+
 export function startStreamServer() {
   const server = createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -394,6 +672,11 @@ export function startStreamServer() {
     let m = /^\/stream\/([a-f0-9]+)\/(\d+)/i.exec(url);
     if (m) {
       void handleStream(req, res, m[1].toLowerCase(), parseInt(m[2], 10));
+      return;
+    }
+    m = /^\/mkvsub\/([a-f0-9]+)\/(\d+)\/(\d+)\.vtt/i.exec(url);
+    if (m) {
+      void handleMkvSubtitle(res, m[1].toLowerCase(), parseInt(m[2], 10), parseInt(m[3], 10));
       return;
     }
     m = /^\/sub\/([a-f0-9]+)\/(\d+)\.vtt/i.exec(url);
@@ -419,6 +702,15 @@ export function registerTorrentIpc() {
   );
   ipcMain.handle('torrent:get-subtitles', async (_e, args: { infoHash: string; fileIdx: number }) =>
     getSubtitles(args.infoHash, args.fileIdx),
+  );
+  ipcMain.handle('torrent:get-audio-tracks', async (_e, args: { infoHash: string; fileIdx: number }) =>
+    getAudioTracks(args.infoHash, args.fileIdx),
+  );
+  ipcMain.handle('torrent:switch-audio', async (_e, args: { infoHash: string; fileIdx: number; typeIndex: number; atSeconds: number }) =>
+    switchAudioTrack(args.infoHash, args.fileIdx, args.typeIndex, args.atSeconds ?? 0),
+  );
+  ipcMain.handle('torrent:seek', async (_e, args: { infoHash: string; fileIdx: number; atSeconds: number }) =>
+    seekStream(args.infoHash, args.fileIdx, args.atSeconds ?? 0),
   );
   ipcMain.on('torrent:subscribe', (e, infoHash: string) => {
     let set = subscribers.get(infoHash);

@@ -25,6 +25,8 @@ export interface TorrentStatsEvent {
   downloadedBytes: number;
   initialBufferProgress: number;
   bufferingComplete: boolean;
+  durationSeconds: number;
+  needsRemux: boolean;
 }
 
 export interface SubtitleTrack {
@@ -34,6 +36,17 @@ export interface SubtitleTrack {
   format: string;
   sourceName: string;
   trackReference: string;
+  supported: boolean;
+}
+
+export interface AudioTrack {
+  id: string;
+  typeIndex: number;
+  language: string;
+  label: string;
+  codec: string;
+  channels: number;
+  isDefault: boolean;
 }
 
 const api = {
@@ -59,6 +72,24 @@ const api = {
       fileIdx: number,
     ): Promise<SubtitleTrack[]> =>
       ipcRenderer.invoke('torrent:get-subtitles', { infoHash, fileIdx }),
+    getAudioTracks: (
+      infoHash: string,
+      fileIdx: number,
+    ): Promise<AudioTrack[]> =>
+      ipcRenderer.invoke('torrent:get-audio-tracks', { infoHash, fileIdx }),
+    switchAudio: (
+      infoHash: string,
+      fileIdx: number,
+      typeIndex: number,
+      atSeconds: number,
+    ): Promise<{ streamUrl: string }> =>
+      ipcRenderer.invoke('torrent:switch-audio', { infoHash, fileIdx, typeIndex, atSeconds }),
+    seek: (
+      infoHash: string,
+      fileIdx: number,
+      atSeconds: number,
+    ): Promise<{ streamUrl: string }> =>
+      ipcRenderer.invoke('torrent:seek', { infoHash, fileIdx, atSeconds }),
     subscribe: (
       infoHash: string,
       onStats: (stats: TorrentStatsEvent) => void,

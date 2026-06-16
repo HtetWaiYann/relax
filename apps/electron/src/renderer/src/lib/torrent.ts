@@ -23,6 +23,8 @@ export interface TorrentStatsEvent {
   downloadedBytes: number;
   initialBufferProgress: number;
   bufferingComplete: boolean;
+  durationSeconds: number;
+  needsRemux: boolean;
 }
 
 export interface SubtitleTrack {
@@ -32,6 +34,17 @@ export interface SubtitleTrack {
   format: string;
   sourceName: string;
   trackReference: string;
+  supported: boolean;
+}
+
+export interface AudioTrack {
+  id: string;
+  typeIndex: number;
+  language: string;
+  label: string;
+  codec: string;
+  channels: number;
+  isDefault: boolean;
 }
 
 export interface TorrentBridge {
@@ -39,6 +52,9 @@ export interface TorrentBridge {
   stop(infoHash: string): Promise<void>;
   setPosition(infoHash: string, fileIdx: number, positionSeconds: number): Promise<void>;
   getSubtitles(infoHash: string, fileIdx: number): Promise<SubtitleTrack[]>;
+  getAudioTracks(infoHash: string, fileIdx: number): Promise<AudioTrack[]>;
+  switchAudio(infoHash: string, fileIdx: number, typeIndex: number, atSeconds: number): Promise<{ streamUrl: string }>;
+  seek(infoHash: string, fileIdx: number, atSeconds: number): Promise<{ streamUrl: string }>;
   subscribe(infoHash: string, onStats: (stats: TorrentStatsEvent) => void): () => void;
 }
 
@@ -102,6 +118,32 @@ export async function getStreamSubtitles(
   fileIdx: number,
 ): Promise<SubtitleTrack[]> {
   return bridge()?.getSubtitles(infoHash, fileIdx) ?? [];
+}
+
+export async function getStreamAudioTracks(
+  infoHash: string,
+  fileIdx: number,
+): Promise<AudioTrack[]> {
+  return bridge()?.getAudioTracks(infoHash, fileIdx) ?? [];
+}
+
+export async function switchStreamAudio(
+  infoHash: string,
+  fileIdx: number,
+  typeIndex: number,
+  atSeconds: number,
+): Promise<string | null> {
+  const res = await bridge()?.switchAudio(infoHash, fileIdx, typeIndex, atSeconds);
+  return res?.streamUrl ?? null;
+}
+
+export async function seekStreamUrl(
+  infoHash: string,
+  fileIdx: number,
+  atSeconds: number,
+): Promise<string | null> {
+  const res = await bridge()?.seek(infoHash, fileIdx, atSeconds);
+  return res?.streamUrl ?? null;
 }
 
 export function useTorrentStats(infoHash: string | null): TorrentStatsEvent | null {
