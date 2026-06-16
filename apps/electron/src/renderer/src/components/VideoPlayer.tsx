@@ -67,6 +67,12 @@ const HIDE_DELAY_MS = 3000;
 // Order in which sourceNames appear in the subtitle menu. Empty groups are omitted.
 const SUBTITLE_GROUP_ORDER = ['Embedded', 'Embedded (MKV)', 'OpenSubtitles', 'YIFYSubs'] as const;
 
+// ponytail: English-only. Drop non-English tracks at ingest so they don't
+// show up in the menu, auto-select, or get downloaded. If multi-language
+// support is ever wanted, lift this into a user setting.
+const isEnglish = (lang: string | undefined) =>
+  !!lang && /^en([_-]|$)|^eng$/i.test(lang);
+
 type TrackLoadState = 'loading' | 'error' | 'quota';
 type PanelKind = 'none' | 'subs' | 'audio' | 'speed';
 
@@ -140,21 +146,23 @@ export function VideoPlayer(props: VideoPlayerProps) {
   useEffect(() => {
     if (!initialBufferReady) return;
     void getStreamSubtitles(infoHash, fileIdx).then((embedded) => {
-      setTracks(embedded);
+      setTracks(embedded.filter((t) => isEnglish(t.language)));
       if (tmdbId > 0) {
         void relaxClient
           .searchSubtitles({ tmdbId, mediaType, season, episode })
           .then((res) => {
-            const external: SubtitleTrack[] = (res.tracks ?? []).map((t) => ({
-              language: t.language,
-              label: t.label,
-              url: t.url,
-              format: t.format,
-              sourceName: t.sourceName,
-              trackReference: t.trackReference,
-              // External tracks are always extractable (provider downloads SRT/VTT).
-              supported: true,
-            }));
+            const external: SubtitleTrack[] = (res.tracks ?? [])
+              .filter((t) => isEnglish(t.language))
+              .map((t) => ({
+                language: t.language,
+                label: t.label,
+                url: t.url,
+                format: t.format,
+                sourceName: t.sourceName,
+                trackReference: t.trackReference,
+                // External tracks are always extractable (provider downloads SRT/VTT).
+                supported: true,
+              }));
             setTracks((prev) => [...prev, ...external]);
           })
           .catch(() => {
@@ -175,12 +183,14 @@ export function VideoPlayer(props: VideoPlayerProps) {
     saveSubtitleStyle(style);
   }, [style]);
 
-  // Auto-hide controls.
+  // Auto-hide controls. Hide while playing OR while buffering (no video yet);
+  // keep them visible only when the user has explicitly paused.
   const wake = useCallback(() => {
     setShowControls(true);
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => {
-      if (videoRef.current && !videoRef.current.paused) setShowControls(false);
+      const v = videoRef.current;
+      if (!v || !v.paused) setShowControls(false);
     }, HIDE_DELAY_MS);
   }, []);
 
@@ -206,6 +216,26 @@ export function VideoPlayer(props: VideoPlayerProps) {
     if (v.paused) void v.play();
     else v.pause();
   }, []);
+
+  // Single click toggles play/pause, double click toggles fullscreen. The
+  // browser fires both onClick and onDoubleClick when you double-click, so
+  // we defer the play toggle long enough to swallow it when the second
+  // click arrives.
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handlePlayerClick = useCallback(() => {
+    if (clickTimerRef.current) return;
+    clickTimerRef.current = setTimeout(() => {
+      clickTimerRef.current = null;
+      togglePlay();
+    }, 220);
+  }, [togglePlay]);
+  const handlePlayerDoubleClick = useCallback(() => {
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    toggleFullscreen();
+  }, [toggleFullscreen]);
 
   const seekTo = useCallback(
     (t: number) => {
@@ -427,12 +457,28 @@ export function VideoPlayer(props: VideoPlayerProps) {
     [tracks],
   );
 
+  // Auto-pick the first supported subtitle once tracks land. Runs exactly
+  // once per session — if the user picks Off afterwards we don't re-enable
+  // when external providers append their results later.
+  const autoSelectedRef = useRef(false);
+  useEffect(() => {
+    if (autoSelectedRef.current) return;
+    if (tracks.length === 0) return;
+    const idx = tracks.findIndex((t) => t.supported !== false);
+    if (idx < 0) return;
+    autoSelectedRef.current = true;
+    void handleSelectTrack(idx);
+  }, [tracks, handleSelectTrack]);
+
   return (
     <div
       ref={containerRef}
       onMouseMove={wake}
       onClick={(e) => {
-        if (e.target === e.currentTarget) togglePlay();
+        if (e.target === e.currentTarget) handlePlayerClick();
+      }}
+      onDoubleClick={(e) => {
+        if (e.target === e.currentTarget) handlePlayerDoubleClick();
       }}
       className="fixed inset-0 z-50 flex h-screen w-screen items-center justify-center bg-black text-neutral-100"
     >
@@ -443,7 +489,8 @@ export function VideoPlayer(props: VideoPlayerProps) {
           className="h-full w-full bg-black"
           autoPlay
           playsInline
-          onClick={togglePlay}
+          onClick={handlePlayerClick}
+          onDoubleClick={handlePlayerDoubleClick}
         />
       ) : (
         <div className="absolute inset-0 bg-black" />
@@ -484,9 +531,9 @@ export function VideoPlayer(props: VideoPlayerProps) {
         <CueOverlay text={activeCue.text} style={style} shiftedForControls={showControls} />
       )}
 
-      {/* Top bar */}
+      {/* Top bar — z-30 so it sits above the buffering overlay (z-20). */}
       <header
-        className={`pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-3 bg-gradient-to-b from-black/85 via-black/40 to-transparent px-4 py-3 transition-opacity duration-200 ${
+        className={`pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center justify-between gap-3 bg-gradient-to-b from-black/85 via-black/40 to-transparent px-4 py-3 transition-opacity duration-200 ${
           showControls ? 'opacity-100' : 'opacity-0'
         }`}
       >
