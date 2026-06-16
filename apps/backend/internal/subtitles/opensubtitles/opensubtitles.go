@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,13 +12,13 @@ import (
 	"time"
 
 	relaxv1 "relax/gen/relax/v1"
+	"relax/internal/subtitles"
 )
 
-var ErrQuotaExceeded = errors.New("opensubtitles: daily download quota exceeded")
-
 const (
-	baseURL   = "https://api.opensubtitles.com/api/v1"
-	userAgent = "RELAX/1.0"
+	providerName = "opensubtitles"
+	baseURL      = "https://api.opensubtitles.com/api/v1"
+	userAgent    = "RELAX/1.0"
 )
 
 type Client struct {
@@ -33,6 +32,8 @@ func New(apiKey string) *Client {
 		http:   &http.Client{Timeout: 15 * time.Second},
 	}
 }
+
+func (c *Client) Name() string { return providerName }
 
 type osSearchResponse struct {
 	Data []struct {
@@ -110,7 +111,7 @@ func (c *Client) Search(ctx context.Context, imdbID string, season, episode int3
 			Url:            "",
 			Format:         "srt",
 			SourceName:     "OpenSubtitles",
-			TrackReference: fmt.Sprintf("%d", file.FileID),
+			TrackReference: subtitles.PrefixRef(providerName, fmt.Sprintf("%d", file.FileID)),
 		})
 	}
 	return tracks, nil
@@ -140,7 +141,7 @@ func (c *Client) Download(ctx context.Context, fileID string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusNotAcceptable {
-		return "", ErrQuotaExceeded
+		return "", subtitles.ErrQuotaExceeded
 	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("opensubtitles download: status %d", resp.StatusCode)
@@ -151,7 +152,7 @@ func (c *Client) Download(ctx context.Context, fileID string) (string, error) {
 		return "", fmt.Errorf("opensubtitles download decode: %w", err)
 	}
 	if dl.Remaining == 0 && dl.Link == "" {
-		return "", ErrQuotaExceeded
+		return "", subtitles.ErrQuotaExceeded
 	}
 
 	// Fetch the actual subtitle file.

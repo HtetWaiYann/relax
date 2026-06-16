@@ -19,7 +19,9 @@ import (
 	"relax/internal/metadata"
 	"relax/internal/server"
 	"relax/internal/streams/torrentio"
+	"relax/internal/subtitles"
 	"relax/internal/subtitles/opensubtitles"
+	"relax/internal/subtitles/yifysubs"
 )
 
 func main() {
@@ -41,12 +43,17 @@ func run() error {
 	meta := metadata.New(cfg.TMDBAPIKey)
 	streamsProvider := torrentio.New(cfg.TorrentioBaseURL)
 
-	var subClient *opensubtitles.Client
+	// Subtitle providers: order is irrelevant since the handler aggregates
+	// concurrently, but nil entries (e.g. OpenSubtitles without an API key)
+	// are filtered out by the server constructor.
+	subtitleProviders := []subtitles.Provider{
+		yifysubs.New(),
+	}
 	if cfg.OpenSubtitlesAPIKey != "" {
-		subClient = opensubtitles.New(cfg.OpenSubtitlesAPIKey)
+		subtitleProviders = append(subtitleProviders, opensubtitles.New(cfg.OpenSubtitlesAPIKey))
 	}
 
-	relaxSrv := server.NewRelaxServer(logger, meta, streamsProvider, subClient, cfg.SubtitleCacheDir, cfg.Port)
+	relaxSrv := server.NewRelaxServer(logger, meta, streamsProvider, subtitleProviders, cfg.SubtitleCacheDir, cfg.Port)
 	path, handler := relaxv1connect.NewRelaxServiceHandler(relaxSrv)
 
 	if err := os.MkdirAll(cfg.SubtitleCacheDir, 0o755); err != nil {

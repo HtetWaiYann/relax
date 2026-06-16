@@ -22,7 +22,7 @@ func (nopStreams) GetStreams(_ context.Context, _ string, _ relaxv1.MediaType, _
 var _ streams.Provider = nopStreams{}
 
 func newTestServer() *RelaxServer {
-	return NewRelaxServer(slog.New(slog.NewTextHandler(io.Discard, nil)), metadata.New(""), nopStreams{})
+	return NewRelaxServer(slog.New(slog.NewTextHandler(io.Discard, nil)), metadata.New(""), nopStreams{}, nil, "", 0)
 }
 
 func TestSearchReturnsStubResults(t *testing.T) {

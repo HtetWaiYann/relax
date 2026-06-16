@@ -12,7 +12,7 @@ import (
 	"relax/gen/relax/v1/relaxv1connect"
 	"relax/internal/metadata"
 	"relax/internal/streams"
-	"relax/internal/subtitles/opensubtitles"
+	"relax/internal/subtitles"
 )
 
 // RelaxServer is a partial implementation of relaxv1connect.RelaxServiceHandler.
@@ -22,7 +22,7 @@ type RelaxServer struct {
 	logger        *slog.Logger
 	meta          *metadata.Client
 	streams       streams.Provider
-	subtitles     *opensubtitles.Client // nil when OPENSUBTITLES_API_KEY is unset
+	subtitles     map[string]subtitles.Provider // keyed by Provider.Name()
 	subtitleCache string
 	port          int
 }
@@ -33,15 +33,22 @@ func NewRelaxServer(
 	logger *slog.Logger,
 	meta *metadata.Client,
 	streamsProvider streams.Provider,
-	subtitlesClient *opensubtitles.Client,
+	subtitleProviders []subtitles.Provider,
 	subtitleCache string,
 	port int,
 ) *RelaxServer {
+	providers := make(map[string]subtitles.Provider, len(subtitleProviders))
+	for _, p := range subtitleProviders {
+		if p == nil {
+			continue
+		}
+		providers[p.Name()] = p
+	}
 	return &RelaxServer{
 		logger:        logger,
 		meta:          meta,
 		streams:       streamsProvider,
-		subtitles:     subtitlesClient,
+		subtitles:     providers,
 		subtitleCache: subtitleCache,
 		port:          port,
 	}
