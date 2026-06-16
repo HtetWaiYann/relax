@@ -10,19 +10,48 @@ import (
 
 	relaxv1 "relax/gen/relax/v1"
 	"relax/gen/relax/v1/relaxv1connect"
+	"relax/internal/metadata"
+	"relax/internal/streams"
+	"relax/internal/subtitles"
 )
 
-// RelaxServer is a stub implementation of relaxv1connect.RelaxServiceHandler.
-// All handlers return placeholder data so the end-to-end pipeline can be
-// verified without a real torrent engine, metadata client, or storage layer.
+// RelaxServer is a partial implementation of relaxv1connect.RelaxServiceHandler.
+// Metadata RPCs (GetHomeSections/SearchMedia/GetMediaDetail) use a real TMDB
+// client; torrent/storage RPCs still return stub data until those layers land.
 type RelaxServer struct {
-	logger *slog.Logger
+	logger        *slog.Logger
+	meta          *metadata.Client
+	streams       streams.Provider
+	subtitles     map[string]subtitles.Provider // keyed by Provider.Name()
+	subtitleCache string
+	port          int
 }
 
 var _ relaxv1connect.RelaxServiceHandler = (*RelaxServer)(nil)
 
-func NewRelaxServer(logger *slog.Logger) *RelaxServer {
-	return &RelaxServer{logger: logger}
+func NewRelaxServer(
+	logger *slog.Logger,
+	meta *metadata.Client,
+	streamsProvider streams.Provider,
+	subtitleProviders []subtitles.Provider,
+	subtitleCache string,
+	port int,
+) *RelaxServer {
+	providers := make(map[string]subtitles.Provider, len(subtitleProviders))
+	for _, p := range subtitleProviders {
+		if p == nil {
+			continue
+		}
+		providers[p.Name()] = p
+	}
+	return &RelaxServer{
+		logger:        logger,
+		meta:          meta,
+		streams:       streamsProvider,
+		subtitles:     providers,
+		subtitleCache: subtitleCache,
+		port:          port,
+	}
 }
 
 func (s *RelaxServer) Search(

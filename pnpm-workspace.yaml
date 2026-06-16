@@ -5,5 +5,11 @@ packages:
 # These packages need to run install scripts to download platform binaries.
 allowBuilds:
   '@bufbuild/buf': true
+  bufferutil: true
   electron: true
   esbuild: true
+  ffmpeg-static: true
+  ip-set: true
+  node-datachannel: true
+  utf-8-validate: true
+  utp-native: true

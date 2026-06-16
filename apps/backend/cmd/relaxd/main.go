@@ -16,7 +16,12 @@ import (
 
 	"relax/gen/relax/v1/relaxv1connect"
 	"relax/internal/config"
+	"relax/internal/metadata"
 	"relax/internal/server"
+	"relax/internal/streams/torrentio"
+	"relax/internal/subtitles"
+	"relax/internal/subtitles/opensubtitles"
+	"relax/internal/subtitles/yifysubs"
 )
 
 func main() {
@@ -35,11 +40,29 @@ func run() error {
 	logger := newLogger(cfg)
 	slog.SetDefault(logger)
 
-	relaxSrv := server.NewRelaxServer(logger)
+	meta := metadata.New(cfg.TMDBAPIKey)
+	streamsProvider := torrentio.New(cfg.TorrentioBaseURL)
+
+	// Subtitle providers: order is irrelevant since the handler aggregates
+	// concurrently, but nil entries (e.g. OpenSubtitles without an API key)
+	// are filtered out by the server constructor.
+	subtitleProviders := []subtitles.Provider{
+		yifysubs.New(),
+	}
+	if cfg.OpenSubtitlesAPIKey != "" {
+		subtitleProviders = append(subtitleProviders, opensubtitles.New(cfg.OpenSubtitlesAPIKey))
+	}
+
+	relaxSrv := server.NewRelaxServer(logger, meta, streamsProvider, subtitleProviders, cfg.SubtitleCacheDir, cfg.Port)
 	path, handler := relaxv1connect.NewRelaxServiceHandler(relaxSrv)
+
+	if err := os.MkdirAll(cfg.SubtitleCacheDir, 0o755); err != nil {
+		logger.Warn("could not create subtitle cache dir", "err", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
+	mux.Handle("/subtitles/", http.StripPrefix("/subtitles/", http.FileServer(http.Dir(cfg.SubtitleCacheDir))))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))

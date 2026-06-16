@@ -18,3 +18,100 @@ message SearchResult {
   MediaMetadata metadata = 1;
   double score = 2;
 }
+
+enum MediaType {
+  MEDIA_TYPE_UNSPECIFIED = 0;
+  MEDIA_TYPE_MOVIE = 1;
+  MEDIA_TYPE_TV = 2;
+}
+
+enum HomeCategory {
+  HOME_CATEGORY_UNSPECIFIED = 0;
+  HOME_CATEGORY_POPULAR_MOVIES = 1;
+  HOME_CATEGORY_TOP_RATED_MOVIES = 2;
+  HOME_CATEGORY_TRENDING_MOVIES = 3;
+  HOME_CATEGORY_POPULAR_TV = 4;
+  HOME_CATEGORY_TOP_RATED_TV = 5;
+}
+
+message Genre {
+  int32 id = 1;
+  string name = 2;
+}
+
+message CastMember {
+  int32 id = 1;
+  string name = 2;
+  string character = 3;
+  string profile_url = 4;
+}
+
+message MediaSummary {
+  int32 tmdb_id = 1;
+  MediaType media_type = 2;
+  string title = 3;
+  string poster_url = 4;
+  string backdrop_url = 5;
+  string release_date = 6;
+  double vote_average = 7;
+  repeated int32 genre_ids = 8;
+}
+
+message MediaDetail {
+  MediaSummary summary = 1;
+  string overview = 2;
+  int32 runtime_minutes = 3;
+  repeated Genre genres = 4;
+  string tagline = 5;
+  string status = 6;
+  string original_language = 7;
+  repeated string production_countries = 8;
+  repeated CastMember cast = 9;
+  repeated MediaSummary similar = 10;
+  repeated SeasonInfo seasons = 11;
+  string imdb_id = 12;
+}
+
+message SeasonInfo {
+  int32 season_number = 1;
+  string name = 2;
+  int32 episode_count = 3;
+}
+
+message StreamSource {
+  string title = 1;
+  string quality = 2;
+  int64 size_bytes = 3;
+  int32 seeders = 4;
+  string info_hash = 5;
+  int32 file_idx = 6;
+  string source_name = 7;
+}
+
+message HomeSection {
+  HomeCategory category = 1;
+  string label = 2;
+  repeated MediaSummary items = 3;
+}
+
+message PersonCredit {
+  int32 tmdb_id = 1;
+  MediaType media_type = 2;
+  string title = 3;
+  string poster_url = 4;
+  string release_date = 5;
+  string character = 6;
+  double vote_average = 7;
+}
+
+message PersonDetail {
+  int32 id = 1;
+  string name = 2;
+  string profile_url = 3;
+  string biography = 4;
+  string birthday = 5;
+  string deathday = 6;
+  string place_of_birth = 7;
+  string known_for_department = 8;
+  repeated PersonCredit credits = 9;
+}
