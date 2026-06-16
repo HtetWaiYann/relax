@@ -1,4 +1,5 @@
 import { Link, NavLink } from 'react-router-dom';
+import { Settings as SettingsIcon } from 'lucide-react';
 import { APP_NAME } from '@relax/shared-utils';
 import { SearchBar } from './SearchBar';
 
@@ -38,8 +39,22 @@ export function TopBar() {
           ))}
         </nav>
 
-        <div className="flex flex-1 justify-end">
+        <div className="flex flex-1 items-center justify-end gap-2">
           <SearchBar />
+          <NavLink
+            to="/settings"
+            aria-label="Settings"
+            className={({ isActive }) =>
+              [
+                'rounded-md p-2 transition',
+                isActive
+                  ? 'bg-accent-light/20 text-accent-light'
+                  : 'text-neutral-400 hover:bg-white/10 hover:text-neutral-100',
+              ].join(' ')
+            }
+          >
+            <SettingsIcon className="h-4 w-4" />
+          </NavLink>
         </div>
       </div>
     </header>

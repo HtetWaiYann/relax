@@ -19,8 +19,19 @@ apps/backend/tmp/
 # TypeScript incremental build cache
 *.tsbuildinfo
 
-# Local Claude Code tooling
+# Local agent / Claude tooling
 .claude/
+.agents/
+.codex/
+
+# pnpm local content-addressable store
+.pnpm-store/
+
+# Vite's hashed temp config files (auto-generated next to electron.vite.config.ts)
+apps/electron/electron.vite.config.*.mjs
+
+# Backend's local subtitle cache
+apps/backend/subtitle_cache/
 
 # turbo cache
 .turbo/

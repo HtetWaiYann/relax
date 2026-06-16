@@ -45,21 +45,45 @@ message GetMetadataResponse {
   MediaMetadata metadata = 1;
 }
 
-message SaveWatchProgressRequest {
+message UpsertWatchProgressRequest {
   WatchProgress progress = 1;
 }
 
-message SaveWatchProgressResponse {
-  WatchProgress progress = 1;
-}
+message UpsertWatchProgressResponse {}
 
 message GetWatchProgressRequest {
   string media_id = 1;
+  MediaType media_type = 2;
+  int32 season = 3;
+  int32 episode = 4;
 }
 
 message GetWatchProgressResponse {
   WatchProgress progress = 1;
+  bool found = 2;
 }
+
+message GetWatchHistoryRequest {
+  int32 limit = 1;
+  int32 offset = 2;
+}
+
+message GetWatchHistoryResponse {
+  repeated WatchProgress items = 1;
+  int32 total_count = 2;
+}
+
+message DeleteWatchProgressRequest {
+  string media_id = 1;
+  MediaType media_type = 2;
+  int32 season = 3;
+  int32 episode = 4;
+}
+
+message DeleteWatchProgressResponse {}
+
+message ClearWatchHistoryRequest {}
+message ClearWatchHistoryResponse {}
 
 message StreamTorrentProgressRequest {
   string torrent_id = 1;
@@ -153,8 +177,11 @@ service RelaxService {
   rpc AddTorrent(AddTorrentRequest) returns (AddTorrentResponse);
   rpc RemoveTorrent(RemoveTorrentRequest) returns (RemoveTorrentResponse);
   rpc GetMetadata(GetMetadataRequest) returns (GetMetadataResponse);
-  rpc SaveWatchProgress(SaveWatchProgressRequest) returns (SaveWatchProgressResponse);
+  rpc UpsertWatchProgress(UpsertWatchProgressRequest) returns (UpsertWatchProgressResponse);
   rpc GetWatchProgress(GetWatchProgressRequest) returns (GetWatchProgressResponse);
+  rpc GetWatchHistory(GetWatchHistoryRequest) returns (GetWatchHistoryResponse);
+  rpc DeleteWatchProgress(DeleteWatchProgressRequest) returns (DeleteWatchProgressResponse);
+  rpc ClearWatchHistory(ClearWatchHistoryRequest) returns (ClearWatchHistoryResponse);
   rpc StreamTorrentProgress(StreamTorrentProgressRequest) returns (stream TorrentProgressUpdate);
   rpc GetHomeSections(GetHomeSectionsRequest) returns (GetHomeSectionsResponse);
   rpc SearchMedia(SearchMediaRequest) returns (SearchMediaResponse);

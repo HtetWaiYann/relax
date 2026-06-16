@@ -1,7 +1,8 @@
-import { useHomeSections } from '../lib/queries';
+import { useHomeSections, useWatchHistory } from '../lib/queries';
 import { FeaturedHero } from '../components/FeaturedHero';
 import { HorizontalRow } from '../components/HorizontalRow';
 import { PosterCard } from '../components/PosterCard';
+import { ContinueCard } from '../components/ContinueCard';
 import {
   FeaturedHeroSkeleton,
   HorizontalRowSkeleton,
@@ -17,6 +18,8 @@ const SECTION_LABELS = [
 
 export function Home() {
   const { data, isLoading, error } = useHomeSections();
+  const history = useWatchHistory(20);
+  const historyItems = history.data?.items ?? [];
 
   if (error) {
     return <ErrorBlock message={error.message} />;
@@ -36,6 +39,14 @@ export function Home() {
   return (
     <div className="space-y-10">
       {data.featured && <FeaturedHero detail={data.featured} />}
+
+      {historyItems.length > 0 && (
+        <HorizontalRow label="Continue Watching">
+          {historyItems.map((it) => (
+            <ContinueCard key={`${it.mediaId}-${it.mediaType}-${it.season}-${it.episode}`} item={it} />
+          ))}
+        </HorizontalRow>
+      )}
 
       {data.sections.map((section) => (
         <HorizontalRow key={section.category} label={section.label}>

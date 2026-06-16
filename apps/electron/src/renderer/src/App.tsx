@@ -5,6 +5,7 @@ import { SearchResults } from './pages/SearchResults';
 import { Detail } from './pages/Detail';
 import { Browse } from './pages/Browse';
 import { Person } from './pages/Person';
+import { Settings } from './pages/Settings';
 import { Watch } from './pages/Watch';
 
 export function App() {
@@ -32,6 +33,7 @@ export function App() {
             }
           />
           <Route path="search" element={<SearchResults />} />
+          <Route path="settings" element={<Settings />} />
           <Route path="title/:mediaType/:id" element={<Detail />} />
           <Route path="person/:id" element={<Person />} />
         </Route>

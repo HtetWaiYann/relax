@@ -6,6 +6,30 @@ export interface StartStreamArgs {
   infoHash: string;
   fileIdx: number;
   magnetUri: string;
+  positionSeconds?: number;
+  title?: string;
+  posterUrl?: string;
+}
+
+export interface CacheStats {
+  totalAppBytes: number;
+  cacheBytes: number;
+  dbBytes: number;
+  entries: Array<{
+    infoHash: string;
+    torrentName: string;
+    title: string;
+    posterUrl: string;
+    cachedBytes: number;
+    lastAccessedAt: number;
+  }>;
+}
+
+export interface AppPaths {
+  userData: string;
+  torrents: string;
+  cacheWindowMb: number;
+  keepDownloads: boolean;
 }
 
 export interface StartStreamResult {
@@ -90,6 +114,18 @@ const api = {
       atSeconds: number,
     ): Promise<{ streamUrl: string }> =>
       ipcRenderer.invoke('torrent:seek', { infoHash, fileIdx, atSeconds }),
+    getCacheStats: (): Promise<CacheStats> =>
+      ipcRenderer.invoke('cache:stats'),
+    clearCache: (infoHash?: string): Promise<{ freedBytes: number }> =>
+      ipcRenderer.invoke('cache:clear', infoHash),
+    markCacheFinished: (infoHash: string): Promise<void> =>
+      ipcRenderer.invoke('cache:mark-finished', infoHash),
+    getCacheTtlDays: (): Promise<number> =>
+      ipcRenderer.invoke('cache:get-ttl-days'),
+    setCacheTtlDays: (days: number): Promise<void> =>
+      ipcRenderer.invoke('cache:set-ttl-days', days),
+    getAppPaths: (): Promise<AppPaths> =>
+      ipcRenderer.invoke('app:paths'),
     subscribe: (
       infoHash: string,
       onStats: (stats: TorrentStatsEvent) => void,

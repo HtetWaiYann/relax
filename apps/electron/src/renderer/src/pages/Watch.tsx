@@ -16,6 +16,8 @@ export interface WatchState {
   mediaType: MediaType;
   season: number;
   episode: number;
+  resumeSeconds?: number;
+  posterUrl?: string;
 }
 
 export function Watch() {
@@ -33,6 +35,9 @@ export function Watch() {
       infoHash: state.infoHash,
       fileIdx: state.fileIdx,
       magnetUri: state.magnetUri,
+      positionSeconds: state.resumeSeconds,
+      title: state.title,
+      posterUrl: state.posterUrl,
     })
       .then((res) => {
         if (!cancelled) setStream(res);
@@ -81,6 +86,9 @@ export function Watch() {
       mediaType={state.mediaType}
       season={state.season}
       episode={state.episode}
+      resumeSeconds={state.resumeSeconds}
+      magnetUri={state.magnetUri}
+      posterUrl={state.posterUrl}
       onBack={() => navigate(-1)}
     />
   );
