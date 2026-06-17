@@ -1,6 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-const BACKEND_URL = process.env['BACKEND_URL'] ?? 'http://localhost:8080';
+// Main passes the live backend URL via webPreferences.additionalArguments in
+// packaged mode (dynamic port). Falls back to env var for `pnpm dev`.
+function resolveBackendUrl(): string {
+  const fromArgv = process.argv.find(a => a.startsWith('--backend-url='));
+  if (fromArgv) return fromArgv.slice('--backend-url='.length);
+  return process.env['BACKEND_URL'] ?? 'http://localhost:8080';
+}
+
+const BACKEND_URL = resolveBackendUrl();
 
 export interface StartStreamArgs {
   infoHash: string;
@@ -75,7 +83,7 @@ export interface AudioTrack {
 
 const api = {
   getBackendUrl: (): string => BACKEND_URL,
-  getAppName: (): string => 'RELAX',
+  getAppName: (): string => 'Relax',
   torrent: {
     start: (args: StartStreamArgs): Promise<StartStreamResult> =>
       ipcRenderer.invoke('torrent:start', args),

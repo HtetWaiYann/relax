@@ -10,6 +10,8 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "dist": "pnpm --filter @relax/backend build:sidecar && electron-vite build && electron-builder",
+    "dist:all": "TARGETS=darwin/arm64,darwin/amd64,linux/amd64,windows/amd64 pnpm --filter @relax/backend build:sidecar && electron-vite build && electron-builder -mwl",
     "lint": "eslint src --max-warnings=0 || true",
     "test": "echo \"no tests yet\" && exit 0",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
@@ -18,28 +20,24 @@
     "postinstall": "node scripts/patch-electron-name.mjs 2>/dev/null || true"
   },
   "dependencies": {
-    "@connectrpc/connect": "^2.0.1",
-    "@connectrpc/connect-web": "^2.0.1",
-    "@relax/shared-utils": "workspace:*",
-    "@relax/types": "workspace:*",
-    "@tanstack/react-query": "^5.101.0",
     "ffmpeg-static": "^5.3.0",
     "ffprobe-static": "^3.1.0",
-    "lucide-react": "^1.18.0",
     "mime-types": "^3.0.2",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "react-router-dom": "^7.17.0",
     "webtorrent": "^3.0.16"
   },
   "build": {
     "appId": "com.relax.app",
-    "productName": "RELAX",
+    "productName": "Relax",
     "directories": {
       "output": "dist"
     },
     "files": [
-      "out/**/*"
+      "out/**/*",
+      "!**/.turbo/**",
+      "!**/.cache/**",
+      "!**/*.map",
+      "!**/{tsconfig.json,tsconfig.*.json}",
+      "!**/{.eslintrc,.eslintrc.*,.prettierrc,.prettierrc.*}"
     ],
     "extraResources": [
       {
@@ -53,28 +51,55 @@
       {
         "from": "resources/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "resources/bin",
+        "to": "bin"
       }
     ],
+    "asarUnpack": [
+      "**/node_modules/ffmpeg-static/**",
+      "**/node_modules/ffprobe-static/**"
+    ],
     "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] }
+      ],
       "icon": "resources/icon.icns",
       "category": "public.app-category.entertainment"
     },
     "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ],
       "icon": "resources/icon.ico"
     },
     "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] }
+      ],
       "icon": "resources/icon.png",
       "category": "AudioVideo"
     }
   },
   "devDependencies": {
+    "@connectrpc/connect": "^2.0.1",
+    "@connectrpc/connect-web": "^2.0.1",
+    "@relax/shared-utils": "workspace:*",
+    "@relax/types": "workspace:*",
     "@tailwindcss/vite": "^4.0.0",
+    "@tanstack/react-query": "^5.101.0",
     "@types/mime-types": "^3.0.1",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.3.0",
+    "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
+    "lucide-react": "^1.18.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.17.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.3",
     "vite": "^6.0.7"

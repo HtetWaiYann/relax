@@ -21,14 +21,17 @@ func NewCORSMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
+			wildcard := allowedOrigin == "*"
 
-			if origin != "" && origin != allowedOrigin {
+			if origin != "" && !wildcard && origin != allowedOrigin {
 				http.Error(w, "origin not allowed", http.StatusForbidden)
 				return
 			}
 
 			if origin != "" {
-				w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+				// ponytail: echo origin instead of literal "*" so credentialed
+				// requests still work; upgrade to a real allowlist if needed.
+				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", connectAllowedHeaders)

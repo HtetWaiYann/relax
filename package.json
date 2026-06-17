@@ -15,6 +15,7 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "gen:proto": "buf generate",
+    "dist": "pnpm gen:proto && pnpm --filter @relax/electron dist",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md,yaml,yml}\""
   },
   "devDependencies": {

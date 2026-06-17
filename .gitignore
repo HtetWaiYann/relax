@@ -16,6 +16,9 @@ apps/backend/relaxd
 apps/backend/relax.db
 apps/backend/tmp/
 
+# Sidecar binary staged for electron-builder
+apps/electron/resources/bin/
+
 # TypeScript incremental build cache
 *.tsbuildinfo
 
