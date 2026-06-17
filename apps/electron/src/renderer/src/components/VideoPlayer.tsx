@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  ArrowDown,
   ArrowUp,
   Check,
   ChevronLeft,
@@ -23,6 +24,7 @@ import {
   Subtitles,
   Volume2,
   VolumeX,
+  X,
 } from 'lucide-react';
 import { ConnectError, Code } from '@connectrpc/connect';
 import { type MediaType } from '@relax/types';
@@ -289,6 +291,10 @@ export function VideoPlayer(props: VideoPlayerProps) {
         setSeekOffsetSeconds(clamped);
         setCurrentTime(0);
         setBufferedEnd(0);
+        // <video>'s `waiting` event doesn't fire on src swap (it goes
+        // emptied→loadstart→canplay), so force the buffering pill on until
+        // canplay clears it.
+        setReBuffering(true);
         void seekStreamUrl(infoHash, fileIdx, clamped).then((url) => {
           if (url) setStreamUrl(url);
         });
@@ -456,6 +462,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
     };
     const onError = () => {
       const code = v.error?.code;
+      console.warn('[video] error', { code, msg: v.error?.message, src: v.currentSrc });
       if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
         setVideoError('This file format or codec isn\'t supported. Try a different source.');
       } else if (code === MediaError.MEDIA_ERR_NETWORK) {
@@ -627,7 +634,16 @@ export function VideoPlayer(props: VideoPlayerProps) {
       )}
 
       {(!initialBufferReady || !streamUrl) && (
-        <BufferingOverlay percent={initialBufferPct} />
+        <BufferingOverlay
+          percent={initialBufferPct}
+          title={title}
+          subtitle={subtitle}
+          quality={quality}
+          sourceLabel={sourceLabel}
+          posterUrl={posterUrl}
+          stats={stats}
+          onBack={onBack}
+        />
       )}
 
       {videoError && (
@@ -837,27 +853,198 @@ export function VideoPlayer(props: VideoPlayerProps) {
   );
 }
 
-function BufferingOverlay({ percent }: { percent: number }) {
+function BufferingOverlay({
+  percent,
+  title,
+  subtitle,
+  quality,
+  sourceLabel,
+  posterUrl,
+  stats,
+  onBack,
+}: {
+  percent: number;
+  title: string;
+  subtitle?: string;
+  quality?: string;
+  sourceLabel?: string;
+  posterUrl?: string;
+  stats: ReturnType<typeof useTorrentStats>;
+  onBack: () => void;
+}) {
+  const numPeers = stats?.numPeers ?? 0;
+  const downloadSpeedBps = stats?.downloadSpeedBps ?? 0;
+  const durationSec = stats?.durationSeconds ?? 0;
+
+  // ponytail: ETA from observed buffer velocity since first non-zero sample.
+  // Linear projection — good enough for a transient UI hint. Swap for a
+  // smoothed estimate if it visibly jitters.
+  const anchorRef = useRef<{ t: number; pct: number } | null>(null);
+  const [etaSec, setEtaSec] = useState<number | null>(null);
+  useEffect(() => {
+    if (percent <= 0 || percent >= 100) return;
+    if (!anchorRef.current) {
+      anchorRef.current = { t: Date.now(), pct: percent };
+      return;
+    }
+    const { t, pct } = anchorRef.current;
+    const elapsed = (Date.now() - t) / 1000;
+    const gained = percent - pct;
+    if (gained > 0 && elapsed > 1) {
+      setEtaSec(Math.max(0, Math.round(((100 - percent) * elapsed) / gained)));
+    }
+  }, [percent]);
+
+  const meta = [
+    subtitle,
+    durationSec > 0 ? fmtDuration(durationSec) : null,
+    quality,
+    sourceLabel,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const R = 42;
+  const C = 2 * Math.PI * R;
+  const clamped = Math.max(0, Math.min(100, percent));
+  const dashOffset = C * (1 - clamped / 100);
+
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black">
-      <div className="flex flex-col items-center gap-4 text-center text-neutral-200">
-        <div className="relative h-16 w-16">
-          <div className="absolute inset-0 rounded-full border-2 border-white/10" />
-          <div className="absolute inset-0 animate-spin rounded-full border-2 border-transparent border-t-accent" />
-        </div>
+    <div className="absolute inset-0 z-20 flex items-center justify-center overflow-hidden bg-black">
+      {posterUrl && (
+        <div
+          aria-hidden
+          className="absolute inset-0 scale-110 opacity-25 blur-3xl"
+          style={{
+            backgroundImage: `url(${posterUrl})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+          }}
+        />
+      )}
+
+      <div className="relative z-10 flex w-full max-w-md flex-col items-center gap-5 px-6 text-center">
+        {posterUrl && (
+          <img
+            src={posterUrl}
+            alt=""
+            className="aspect-[3/4] w-30 rounded-lg object-cover shadow-2xl ring-1 ring-white/10"
+          />
+        )}
+
         <div className="space-y-1">
-          <div className="text-sm font-medium">Buffering…</div>
-          <div className="text-xs text-neutral-400">{percent}%</div>
+          <h2 className="text-2xl font-semibold text-white">{title}</h2>
+          {meta && <p className="text-sm text-neutral-400">{meta}</p>}
         </div>
-        <div className="h-1 w-48 overflow-hidden rounded-full bg-white/10">
+
+        {/* <div className="relative h-24 w-24">
+          <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+            <circle
+              cx="50"
+              cy="50"
+              r={R}
+              fill="none"
+              stroke="rgba(255,255,255,0.1)"
+              strokeWidth="4"
+            />
+            <circle
+              cx="50"
+              cy="50"
+              r={R}
+              fill="none"
+              className="stroke-accent transition-[stroke-dashoffset] duration-500"
+              strokeWidth="4"
+              strokeDasharray={C}
+              strokeDashoffset={dashOffset}
+              strokeLinecap="round"
+            />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center text-lg font-semibold tabular-nums text-white">
+            {clamped}%
+          </div>
+        </div> */}
+
+        <div className="space-y-1 mt-10 animate-pulse">
+          <p className="text-sm font-medium text-neutral-200">Buffering stream…</p>
+          <p className="text-xs text-neutral-400">
+            {numPeers > 0
+              ? `Fetching pieces from ${numPeers} peer${numPeers === 1 ? '' : 's'}`
+              : 'Connecting to peers…'}
+          </p>
+        </div>
+
+        {/* <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
           <div
-            className="h-full rounded-full bg-accent transition-[width]"
-            style={{ width: `${percent}%` }}
+            className="h-full rounded-full bg-accent transition-[width] duration-500"
+            style={{ width: `${clamped}%` }}
+          />
+        </div> */}
+
+        <div className="grid w-full grid-cols-3 gap-4 mt-10">
+          <BufStat
+            icon={<ArrowDown className="h-3.5 w-3.5 text-accent" />}
+            value={fmtSpeed(downloadSpeedBps)}
+            valueClassName="text-accent"
+            label="Download"
+          />
+          <BufStat value={numPeers > 0 ? String(numPeers) : '—'} label="Active Peers" />
+          <BufStat
+            value={etaSec !== null ? `~${fmtEta(etaSec)}` : '—'}
+            label="Est. wait"
           />
         </div>
+
+        <button
+          type="button"
+          onClick={onBack}
+          className="mt-20 flex cursor-pointer items-center gap-1.5 text-sm text-neutral-400 transition hover:text-white"
+        >
+          <X className="h-4 w-4" />
+          Cancel and go back
+        </button>
       </div>
     </div>
   );
+}
+
+function BufStat({
+  icon,
+  value,
+  valueClassName,
+  label,
+}: {
+  icon?: ReactNode;
+  value: string;
+  valueClassName?: string;
+  label: string;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      <div
+        className={`flex items-center gap-1 text-sm font-semibold tabular-nums ${
+          valueClassName ?? 'text-neutral-100'
+        }`}
+      >
+        {icon}
+        {value}
+      </div>
+      <div className="text-[11px] uppercase tracking-wide text-neutral-500">{label}</div>
+    </div>
+  );
+}
+
+function fmtDuration(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function fmtEta(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s === 0 ? `${m}m` : `${m}m ${s}s`;
 }
 
 function ProgressBar({
