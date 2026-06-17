@@ -307,10 +307,10 @@ export function VideoPlayer(props: VideoPlayerProps) {
       // Arrows always seek — even with a button focused — so the player
       // doesn't fight focus-driven keyboard navigation. Other shortcuts still
       // defer to input/select focus.
+      // ponytail: keyboard shortcuts never wake the controls — mouse-only.
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
         seekTo(displayTime + (e.key === 'ArrowRight' ? 10 : -10));
-        wake();
         return;
       }
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -339,11 +339,10 @@ export function VideoPlayer(props: VideoPlayerProps) {
           toggleFullscreen();
           break;
       }
-      wake();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [wake, toggleFullscreen, seekTo, displayTime]);
+  }, [toggleFullscreen, seekTo, displayTime]);
 
   // Track video element state.
   useEffect(() => {
