@@ -132,7 +132,7 @@ export function Detail() {
           </div>
         </div>
 
-        <div className="mx-auto max-w-6xl space-y-12 px-6 pb-12 lg:px-10">
+        <div className="mx-auto max-w-6xl space-y-12 px-6 pb-12">
           {detail.cast.length > 0 && (
             <section className="space-y-4">
               <h2 className="text-lg font-semibold text-neutral-100">Cast</h2>
