@@ -6,6 +6,7 @@ import "relax/v1/media.proto";
 import "relax/v1/streams.proto";
 import "relax/v1/torrent.proto";
 import "relax/v1/watch_progress.proto";
+import "relax/v1/watchlist.proto";
 
 option go_package = "relax/gen/relax/v1;relaxv1";
 
@@ -172,6 +173,44 @@ message DownloadSubtitleResponse {
   string url = 1;
 }
 
+message AddToWatchlistRequest {
+  WatchlistItem item = 1;
+}
+
+message AddToWatchlistResponse {}
+
+message RemoveFromWatchlistRequest {
+  string media_id = 1;
+  MediaType media_type = 2;
+}
+
+message RemoveFromWatchlistResponse {}
+
+message GetWatchlistRequest {
+  WatchlistSort sort_by = 1;
+  SortOrder order = 2;
+  WatchlistFilter media_type_filter = 3;
+  int32 limit = 4;
+  int32 offset = 5;
+}
+
+message GetWatchlistResponse {
+  repeated WatchlistItem items = 1;
+  int32 total_count = 2;
+}
+
+message IsInWatchlistRequest {
+  string media_id = 1;
+  MediaType media_type = 2;
+}
+
+message IsInWatchlistResponse {
+  bool in_watchlist = 1;
+}
+
+message ClearWatchlistRequest {}
+message ClearWatchlistResponse {}
+
 service RelaxService {
   rpc Search(SearchRequest) returns (SearchResponse);
   rpc AddTorrent(AddTorrentRequest) returns (AddTorrentResponse);
@@ -191,4 +230,9 @@ service RelaxService {
   rpc GetStreams(GetStreamsRequest) returns (GetStreamsResponse);
   rpc SearchSubtitles(SearchSubtitlesRequest) returns (SearchSubtitlesResponse);
   rpc DownloadSubtitle(DownloadSubtitleRequest) returns (DownloadSubtitleResponse);
+  rpc AddToWatchlist(AddToWatchlistRequest) returns (AddToWatchlistResponse);
+  rpc RemoveFromWatchlist(RemoveFromWatchlistRequest) returns (RemoveFromWatchlistResponse);
+  rpc GetWatchlist(GetWatchlistRequest) returns (GetWatchlistResponse);
+  rpc IsInWatchlist(IsInWatchlistRequest) returns (IsInWatchlistResponse);
+  rpc ClearWatchlist(ClearWatchlistRequest) returns (ClearWatchlistResponse);
 }
