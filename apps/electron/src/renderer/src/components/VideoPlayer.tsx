@@ -193,6 +193,25 @@ export function VideoPlayer(props: VideoPlayerProps) {
     }).catch(() => setAudioTracks([]));
   }, [infoHash, fileIdx, initialBufferReady, tmdbId, mediaType, season, episode]);
 
+  // MKV-embedded subs are probe-gated and the backend no longer waits for
+  // the probe before returning. Once the probe lands (durationSeconds > 0),
+  // re-fetch and merge MKV tracks in — de-duped by trackReference so we
+  // don't shadow already-present external entries.
+  const probeReady = (stats?.durationSeconds ?? 0) > 0;
+  useEffect(() => {
+    if (!initialBufferReady || !probeReady) return;
+    void getStreamSubtitles(infoHash, fileIdx).then((embedded) => {
+      const mkv = embedded.filter(
+        (t) => isEnglish(t.language) && t.sourceName === 'Embedded (MKV)',
+      );
+      if (mkv.length === 0) return;
+      setTracks((prev) => {
+        const seen = new Set(prev.map((t) => t.trackReference));
+        return [...prev, ...mkv.filter((t) => !seen.has(t.trackReference))];
+      });
+    }).catch(() => { /* noop */ });
+  }, [infoHash, fileIdx, initialBufferReady, probeReady]);
+
   // Persist subtitle style.
   useEffect(() => {
     saveSubtitleStyle(style);

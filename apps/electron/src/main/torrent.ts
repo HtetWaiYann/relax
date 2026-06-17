@@ -231,24 +231,34 @@ function absoluteFilePath(torrent: TorrentLike, file: FileLike): string {
 // ponytail: drain a leading read-stream to force the first N bytes to download
 // sequentially. Browser range requests later pull on demand, which webtorrent
 // turns into piece criticals — so the look-ahead window follows playback.
+// Probe is kicked in parallel as soon as enough header is on disk — running
+// it in series with the full prebuffer drain was the main cause of the
+// extra "initial buffering" wall time after this commit landed.
+const PROBE_TRIGGER_BYTES = 2 * 1024 * 1024;
 function primeInitialBuffer(file: FileLike, sess: Session, onUpdate: () => void) {
   const end = Math.min(INITIAL_BUFFER_BYTES, file.length) - 1;
   const stream = file.createReadStream({ start: 0, end });
+  let probeKicked = false;
+  const kickProbe = () => {
+    if (probeKicked) return;
+    probeKicked = true;
+    void ensureProbe(sess);
+  };
   stream.on('data', (chunk: Buffer) => {
     sess.initialDownloaded += chunk.length;
     onUpdate();
+    if (sess.initialDownloaded >= PROBE_TRIGGER_BYTES) kickProbe();
   });
   stream.on('end', () => {
     sess.bufferingComplete = true;
     onUpdate();
-    // Kick off the probe once we have enough header on disk.
-    void ensureProbe(sess);
+    kickProbe();
   });
   stream.on('error', (err: Error) => {
     console.warn('[torrent] prebuffer error', err);
     sess.bufferingComplete = true;
     onUpdate();
-    void ensureProbe(sess);
+    kickProbe();
   });
 }
 
@@ -635,9 +645,11 @@ async function getSubtitles(infoHash: string, fileIdx: number): Promise<Subtitle
   const loose = findSubtitleFiles(t, fileIdx);
   const sess = sessions.get(infoHash);
   if (!sess) return loose;
-  // Probe may still be in flight; await it so callers see the full list.
-  await ensureProbe(sess);
-  return [...loose, ...mkvEmbeddedSubs(infoHash, sess)];
+  // ponytail: never await the probe here — the renderer fires this on mount
+  // and we don't want subtitle discovery to delay playback. If the probe has
+  // landed, include MKV-embedded streams; otherwise the renderer re-polls
+  // once probe completes (see VideoPlayer.tsx).
+  return sess.probe ? [...loose, ...mkvEmbeddedSubs(infoHash, sess)] : loose;
 }
 
 async function getAudioTracks(infoHash: string, fileIdx: number): Promise<AudioTrack[]> {
@@ -722,8 +734,11 @@ async function handleStream(
     return;
   }
   const sess = sessions.get(infoHash);
-  // Probe may be still in flight; only block remux paths on it.
-  if (sess && !sess.probe) await ensureProbe(sess);
+  // Don't await probe — it was kicked during prebuffer and is almost always
+  // ready by now. If not, serve passthrough; the file is most likely a
+  // Chromium-native codec (which is what passthrough handles correctly).
+  // Files that genuinely need remux (EAC3/DTS/TrueHD) race-lose this on
+  // very fast first requests, but probe completes within ms after that.
 
   const audios = audioStreams(sess?.probe ?? null);
   const selectedAudio = audios.find((a) => a.typeIndex === (sess?.selectedAudioTypeIdx ?? 0));
