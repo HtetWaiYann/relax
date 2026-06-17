@@ -159,7 +159,7 @@ const cacheSettingsPath = join(app.getPath('userData'), 'cache_settings.json');
 interface CacheSettings { ttlDays: number }
 function readCacheSettings(): CacheSettings {
   try { return JSON.parse(readFileSync(cacheSettingsPath, 'utf8')) as CacheSettings; }
-  catch { return { ttlDays: 0 }; }
+  catch { return { ttlDays: 7 }; }
 }
 function writeCacheSettings(s: CacheSettings) {
   try { writeFileSync(cacheSettingsPath, JSON.stringify(s)); }
