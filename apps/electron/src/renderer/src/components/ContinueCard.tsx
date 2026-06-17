@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Play } from 'lucide-react';
 import { MediaType, type WatchProgress } from '@relax/types';
-import { useDeleteWatchProgress } from '../lib/queries';
+import { mediaTypeToRoute, useDeleteWatchProgress } from '../lib/queries';
 import type { WatchState } from '../pages/Watch';
 
 export function ContinueCard({ item }: { item: WatchProgress }) {
@@ -15,7 +15,7 @@ export function ContinueCard({ item }: { item: WatchProgress }) {
     : 0;
   const isTV = item.mediaType === MediaType.TV;
 
-  const onClick = () => {
+  const playStream = () => {
     const state: WatchState = {
       infoHash: item.infoHash,
       fileIdx: item.fileIdx,
@@ -32,10 +32,16 @@ export function ContinueCard({ item }: { item: WatchProgress }) {
     navigate(`/watch/${item.infoHash}`, { state });
   };
 
+  const openDetail = () => {
+    const tmdbId = Number(item.mediaId);
+    if (!tmdbId) return;
+    navigate(`/title/${mediaTypeToRoute(item.mediaType)}/${tmdbId}`);
+  };
+
   return (
     <div
-      className="group flex w-[170px] shrink-0 cursor-pointer flex-col gap-2 sm:w-[180px]"
-      onClick={onClick}
+      className="group flex w-[170px] shrink-0 cursor-zoom-in flex-col gap-2 sm:w-[180px]"
+      onClick={openDetail}
       onContextMenu={(e) => {
         e.preventDefault();
         setMenu({ x: e.clientX, y: e.clientY });
@@ -48,12 +54,17 @@ export function ContinueCard({ item }: { item: WatchProgress }) {
           <div className="flex h-full w-full items-center justify-center text-xs text-neutral-500">No poster</div>
         )}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-0 transition group-hover:opacity-100" />
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 transition group-hover:opacity-100">
-          <div className="rounded-full bg-primary p-3 shadow-lg ring-2 ring-accent-light/50">
+        <button
+          type="button"
+          aria-label="Resume playback"
+          onClick={(e) => { e.stopPropagation(); playStream(); }}
+          className="absolute inset-0 flex cursor-pointer items-center justify-center opacity-0 transition group-hover:opacity-100"
+        >
+          <span className="rounded-full bg-primary p-3 shadow-lg ring-2 ring-accent-light/50">
             <Play className="h-5 w-5 fill-white text-white" />
-          </div>
-        </div>
-        <div className="absolute inset-x-0 bottom-0 h-1 bg-black/60">
+          </span>
+        </button>
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1 bg-black/60">
           <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
         </div>
       </div>
