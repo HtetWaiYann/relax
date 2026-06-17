@@ -1,7 +1,23 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ChevronLeft, Star, Calendar, Clock, Globe2, Play, Plus, Share2 } from 'lucide-react';
-import { mediaTypeFromRoute, useMediaDetail } from '../lib/queries';
+import {
+  ChevronLeft,
+  Star,
+  Calendar,
+  Clock,
+  Globe2,
+  Play,
+  Bookmark,
+  Check,
+  Loader2,
+} from 'lucide-react';
+import {
+  mediaTypeFromRoute,
+  useAddToWatchlist,
+  useIsInWatchlist,
+  useMediaDetail,
+  useRemoveFromWatchlist,
+} from '../lib/queries';
 import { GenrePill } from '../components/GenrePill';
 import { HorizontalRow } from '../components/HorizontalRow';
 import { PosterCard } from '../components/PosterCard';
@@ -15,8 +31,14 @@ export function Detail() {
   const { data, isLoading, error } = useMediaDetail(mediaType, Number.isFinite(id) ? id : 0);
   const navigate = useNavigate();
   const [watchOpen, setWatchOpen] = useState(false);
+  const tmdbIdStr = Number.isFinite(id) ? String(id) : '';
+  const watchlistStatus = useIsInWatchlist(tmdbIdStr, mediaType);
+  const addToWatchlist = useAddToWatchlist();
+  const removeFromWatchlist = useRemoveFromWatchlist();
+  const [watchlistError, setWatchlistError] = useState<string | null>(null);
 
   useEffect(() => { window.scrollTo(0, 0); }, [id]);
+  useEffect(() => { setWatchlistError(null); }, [id]);
 
   if (isLoading || !data) {
     return (
@@ -97,29 +119,51 @@ export function Detail() {
                   />
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setWatchOpen((v) => !v)}
-                    className="flex items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-accent/40"
-                  >
-                    <Play className="h-4 w-4 fill-white" />
-                    Watch
-                  </button>
-                  <button
-                    type="button"
-                    className="flex items-center gap-2 rounded-md border border-border-subtle bg-surface-elevated/60 px-4 py-2.5 text-sm font-medium text-neutral-200 transition hover:bg-surface-elevated"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Library
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Share"
-                    className="rounded-md border border-border-subtle bg-surface-elevated/60 p-2.5 text-neutral-300 transition hover:bg-surface-elevated"
-                  >
-                    <Share2 className="h-4 w-4" />
-                  </button>
+                <div className="flex flex-col items-end gap-1">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setWatchOpen((v) => !v)}
+                      className="flex items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-accent/40"
+                    >
+                      <Play className="h-4 w-4 fill-white" />
+                      Watch
+                    </button>
+                    <WatchlistButton
+                      inWatchlist={watchlistStatus.data?.inWatchlist ?? false}
+                      pending={addToWatchlist.isPending || removeFromWatchlist.isPending}
+                      onToggle={() => {
+                        setWatchlistError(null);
+                        const isIn = watchlistStatus.data?.inWatchlist ?? false;
+                        if (isIn) {
+                          removeFromWatchlist.mutate(
+                            { mediaId: tmdbIdStr, mediaType },
+                            { onError: (e) => setWatchlistError(e.message) },
+                          );
+                        } else {
+                          addToWatchlist.mutate(
+                            {
+                              mediaId: tmdbIdStr,
+                              mediaType,
+                              title: summary.title,
+                              posterUrl: summary.posterUrl,
+                              backdropUrl: summary.backdropUrl,
+                              overview: detail.overview,
+                              voteAverage: summary.voteAverage,
+                              releaseYear: year ? Number(year) : 0,
+                              genres: detail.genres.map((g) => g.name),
+                            },
+                            { onError: (e) => setWatchlistError(e.message) },
+                          );
+                        }
+                      }}
+                    />
+                  </div>
+                  {watchlistError && (
+                    <div className="rounded-md bg-red-950/80 px-2.5 py-1 text-xs text-red-200">
+                      {watchlistError}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -187,6 +231,34 @@ export function Detail() {
         {watchOpen && <WatchSidebar detail={detail} onClose={() => setWatchOpen(false)} />}
       </div>
     </div>
+  );
+}
+
+function WatchlistButton({
+  inWatchlist,
+  pending,
+  onToggle,
+}: {
+  inWatchlist: boolean;
+  pending: boolean;
+  onToggle: () => void;
+}) {
+  const Icon = pending ? Loader2 : inWatchlist ? Check : Bookmark;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={pending}
+      aria-pressed={inWatchlist}
+      className={
+        inWatchlist
+          ? 'flex items-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-white shadow-md transition hover:bg-primary/90 disabled:opacity-70'
+          : 'flex items-center gap-2 rounded-md border border-border-subtle bg-surface-elevated/60 px-4 py-2.5 text-sm font-medium text-neutral-200 transition hover:bg-surface-elevated disabled:opacity-70'
+      }
+    >
+      <Icon className={`h-4 w-4 ${pending ? 'animate-spin' : ''}`} />
+      {inWatchlist ? 'In Watchlist' : 'Add to Watchlist'}
+    </button>
   );
 }
 

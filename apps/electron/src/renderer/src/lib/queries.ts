@@ -1,5 +1,12 @@
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { MediaType, type WatchProgress } from '@relax/types';
+import {
+  MediaType,
+  SortOrder,
+  WatchlistFilter,
+  WatchlistSort,
+  type WatchProgress,
+  type WatchlistItem,
+} from '@relax/types';
 import { relaxClient } from './client';
 
 const HOME_KEY = ['home'] as const;
@@ -124,6 +131,122 @@ export function useClearWatchHistory() {
   return useMutation({
     mutationFn: () => relaxClient.clearWatchHistory({}),
     onSuccess: () => qc.invalidateQueries({ queryKey: HISTORY_KEY }),
+  });
+}
+
+const WATCHLIST_KEY = ['watchlist'] as const;
+const WATCHLIST_STATUS_PREFIX = 'watchlist-status';
+
+export type WatchlistSortKey = 'added_at' | 'title_asc' | 'title_desc' | 'rating';
+
+function sortToProto(s: WatchlistSortKey): { sortBy: WatchlistSort; order: SortOrder } {
+  switch (s) {
+    case 'title_asc':
+      return { sortBy: WatchlistSort.TITLE, order: SortOrder.ASC };
+    case 'title_desc':
+      return { sortBy: WatchlistSort.TITLE, order: SortOrder.DESC };
+    case 'rating':
+      return { sortBy: WatchlistSort.RATING, order: SortOrder.DESC };
+    case 'added_at':
+    default:
+      return { sortBy: WatchlistSort.ADDED_AT, order: SortOrder.DESC };
+  }
+}
+
+function filterToProto(f: 'all' | 'movie' | 'tv'): WatchlistFilter {
+  if (f === 'movie') return WatchlistFilter.MOVIE;
+  if (f === 'tv') return WatchlistFilter.TV;
+  return WatchlistFilter.ALL;
+}
+
+const WATCHLIST_PAGE_SIZE = 30;
+
+export function useInfiniteWatchlist(
+  sort: WatchlistSortKey,
+  filter: 'all' | 'movie' | 'tv',
+) {
+  const { sortBy, order } = sortToProto(sort);
+  const mediaTypeFilter = filterToProto(filter);
+  return useInfiniteQuery({
+    queryKey: [...WATCHLIST_KEY, sort, filter],
+    queryFn: ({ pageParam }) =>
+      relaxClient.getWatchlist({
+        sortBy,
+        order,
+        mediaTypeFilter,
+        limit: WATCHLIST_PAGE_SIZE,
+        offset: pageParam,
+      }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((n, p) => n + p.items.length, 0);
+      return loaded < lastPage.totalCount ? loaded : undefined;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useIsInWatchlist(mediaId: string, mediaType: MediaType) {
+  return useQuery({
+    queryKey: [WATCHLIST_STATUS_PREFIX, mediaId, mediaType],
+    queryFn: () => relaxClient.isInWatchlist({ mediaId, mediaType }),
+    enabled: mediaId !== '' && mediaType !== MediaType.UNSPECIFIED,
+    staleTime: 60_000,
+  });
+}
+
+export type WatchlistInput = Omit<WatchlistItem, '$typeName' | 'addedAt'>;
+
+function statusKey(mediaId: string, mediaType: MediaType) {
+  return [WATCHLIST_STATUS_PREFIX, mediaId, mediaType] as const;
+}
+
+export function useAddToWatchlist() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (item: WatchlistInput) =>
+      relaxClient.addToWatchlist({ item: item as unknown as WatchlistItem }),
+    onMutate: async (item) => {
+      const key = statusKey(item.mediaId, item.mediaType);
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData(key);
+      qc.setQueryData(key, { inWatchlist: true });
+      return { prev, key };
+    },
+    onError: (_e, _item, ctx) => {
+      if (ctx) qc.setQueryData(ctx.key, ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: WATCHLIST_KEY }),
+  });
+}
+
+export function useRemoveFromWatchlist() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { mediaId: string; mediaType: MediaType }) =>
+      relaxClient.removeFromWatchlist({ mediaId: p.mediaId, mediaType: p.mediaType }),
+    onMutate: async (p) => {
+      const key = statusKey(p.mediaId, p.mediaType);
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData(key);
+      qc.setQueryData(key, { inWatchlist: false });
+      return { prev, key };
+    },
+    onError: (_e, _p, ctx) => {
+      if (ctx) qc.setQueryData(ctx.key, ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: WATCHLIST_KEY }),
+  });
+}
+
+export function useClearWatchlist() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => relaxClient.clearWatchlist({}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: WATCHLIST_KEY });
+      qc.invalidateQueries({ queryKey: [WATCHLIST_STATUS_PREFIX] });
+    },
   });
 }
 

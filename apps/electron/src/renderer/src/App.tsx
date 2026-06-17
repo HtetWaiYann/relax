@@ -7,6 +7,7 @@ import { Browse } from './pages/Browse';
 import { Person } from './pages/Person';
 import { Settings } from './pages/Settings';
 import { Watch } from './pages/Watch';
+import { Watchlist } from './pages/Watchlist';
 
 export function App() {
   return (
@@ -33,6 +34,7 @@ export function App() {
             }
           />
           <Route path="search" element={<SearchResults />} />
+          <Route path="watchlist" element={<Watchlist />} />
           <Route path="settings" element={<Settings />} />
           <Route path="title/:mediaType/:id" element={<Detail />} />
           <Route path="person/:id" element={<Person />} />
