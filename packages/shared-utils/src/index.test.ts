@@ -3,7 +3,7 @@ import { APP_NAME, DEFAULT_BACKEND_PORT, DEFAULT_BACKEND_URL } from './index.js'
 
 describe('shared constants', () => {
   it('exposes the app name', () => {
-    expect(APP_NAME).toBe('RELAX');
+    expect(APP_NAME).toBe('Relax');
   });
 
   it('exposes a numeric default port', () => {
