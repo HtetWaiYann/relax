@@ -40,14 +40,14 @@ export function ContinueCard({ item }: { item: WatchProgress }) {
 
   return (
     <div
-      className="group flex w-[170px] shrink-0 cursor-zoom-in flex-col gap-2 sm:w-[180px]"
+      className="group flex w-[170px] shrink-0 flex-col gap-2 sm:w-[180px]"
       onClick={openDetail}
       onContextMenu={(e) => {
         e.preventDefault();
         setMenu({ x: e.clientX, y: e.clientY });
       }}
     >
-      <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-surface-elevated ring-1 ring-border-subtle transition">
+      <div className="relative cursor-zoom-in aspect-[2/3] overflow-hidden rounded-xl bg-surface-elevated ring-1 ring-border-subtle transition">
         {item.posterUrl ? (
           <img src={item.posterUrl} alt={item.title} className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" />
         ) : (
@@ -58,11 +58,9 @@ export function ContinueCard({ item }: { item: WatchProgress }) {
           type="button"
           aria-label="Resume playback"
           onClick={(e) => { e.stopPropagation(); playStream(); }}
-          className="absolute inset-0 flex cursor-pointer items-center justify-center opacity-0 transition group-hover:opacity-100"
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-full bg-primary p-3 opacity-0 shadow-lg ring-2 ring-accent-light/50 transition group-hover:opacity-100"
         >
-          <span className="rounded-full bg-primary p-3 shadow-lg ring-2 ring-accent-light/50">
-            <Play className="h-5 w-5 fill-white text-white" />
-          </span>
+          <Play className="h-5 w-5 fill-white text-white" />
         </button>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1 bg-black/60">
           <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
