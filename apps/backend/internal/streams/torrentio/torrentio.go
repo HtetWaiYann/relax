@@ -87,7 +87,7 @@ func (p *Provider) GetStreams(
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	// ponytail: Torrentio's WAF 403s the default Go User-Agent; pose as a browser.
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; RELAX/0.1)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	req.Header.Set("Accept", "application/json")
 	slog.Debug("torrentio request", "url", url)
 	resp, err := p.http.Do(req)
