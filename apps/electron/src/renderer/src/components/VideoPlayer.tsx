@@ -37,6 +37,7 @@ import {
 import {
   getStreamAudioTracks,
   getStreamSubtitles,
+  markCacheFinished,
   seekStreamUrl,
   setStreamPosition,
   switchStreamAudio,
@@ -58,6 +59,9 @@ interface VideoPlayerProps {
   mediaType: MediaType;
   season: number;
   episode: number;
+  resumeSeconds?: number;
+  magnetUri?: string;
+  posterUrl?: string;
   onBack: () => void;
 }
 
@@ -79,12 +83,20 @@ type PanelKind = 'none' | 'subs' | 'audio' | 'speed';
 export function VideoPlayer(props: VideoPlayerProps) {
   const {
     infoHash, fileIdx, streamUrl: initialStreamUrl, title, subtitle, quality, sourceLabel,
-    tmdbId, mediaType, season, episode, onBack,
+    tmdbId, mediaType, season, episode, resumeSeconds, magnetUri, posterUrl, onBack,
   } = props;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const positionThrottle = useRef<number>(0);
+  // Watch-progress persistence is independent from the engine prefetch hint
+  // — the engine wants frequent updates; we only persist every 10s.
+  const persistThrottle = useRef<number>(0);
+  const resumeAppliedRef = useRef<boolean>(false);
+  // ponytail: most viewers skip credits — treat >=90% watched as finished and
+  // stop persisting. Bump if false-positives on short content; lower if people
+  // complain that long credits keep titles in Continue Watching.
+  const finishedRef = useRef<boolean>(false);
 
   // The currently-served stream URL. Starts at the prop, replaced when the
   // audio track changes or the user seeks in remux mode (the main process
@@ -117,6 +129,9 @@ export function VideoPlayer(props: VideoPlayerProps) {
   const [audioTracks, setAudioTracks] = useState<AudioTrack[]>([]);
   const [selectedAudioId, setSelectedAudioId] = useState<string>('');
   const [audioSwitching, setAudioSwitching] = useState(false);
+  // Transient HUD shown when the user scrolls to change volume.
+  const [volumeHud, setVolumeHud] = useState<number | null>(null);
+  const volumeHudTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const stats = useTorrentStats(infoHash);
   const initialBufferReady = stats?.bufferingComplete ?? false;
@@ -178,6 +193,25 @@ export function VideoPlayer(props: VideoPlayerProps) {
     }).catch(() => setAudioTracks([]));
   }, [infoHash, fileIdx, initialBufferReady, tmdbId, mediaType, season, episode]);
 
+  // MKV-embedded subs are probe-gated and the backend no longer waits for
+  // the probe before returning. Once the probe lands (durationSeconds > 0),
+  // re-fetch and merge MKV tracks in — de-duped by trackReference so we
+  // don't shadow already-present external entries.
+  const probeReady = (stats?.durationSeconds ?? 0) > 0;
+  useEffect(() => {
+    if (!initialBufferReady || !probeReady) return;
+    void getStreamSubtitles(infoHash, fileIdx).then((embedded) => {
+      const mkv = embedded.filter(
+        (t) => isEnglish(t.language) && t.sourceName === 'Embedded (MKV)',
+      );
+      if (mkv.length === 0) return;
+      setTracks((prev) => {
+        const seen = new Set(prev.map((t) => t.trackReference));
+        return [...prev, ...mkv.filter((t) => !seen.has(t.trackReference))];
+      });
+    }).catch(() => { /* noop */ });
+  }, [infoHash, fileIdx, initialBufferReady, probeReady]);
+
   // Persist subtitle style.
   useEffect(() => {
     saveSubtitleStyle(style);
@@ -223,12 +257,17 @@ export function VideoPlayer(props: VideoPlayerProps) {
   // click arrives.
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handlePlayerClick = useCallback(() => {
+    if (panel !== 'none' || showStats) {
+      setPanel('none');
+      setShowStats(false);
+      return;
+    }
     if (clickTimerRef.current) return;
     clickTimerRef.current = setTimeout(() => {
       clickTimerRef.current = null;
       togglePlay();
     }, 220);
-  }, [togglePlay]);
+  }, [togglePlay, panel, showStats]);
   const handlePlayerDoubleClick = useCallback(() => {
     if (clickTimerRef.current) {
       clearTimeout(clickTimerRef.current);
@@ -265,6 +304,15 @@ export function VideoPlayer(props: VideoPlayerProps) {
     const onKey = (e: KeyboardEvent) => {
       const v = videoRef.current;
       if (!v) return;
+      // Arrows always seek — even with a button focused — so the player
+      // doesn't fight focus-driven keyboard navigation. Other shortcuts still
+      // defer to input/select focus.
+      // ponytail: keyboard shortcuts never wake the controls — mouse-only.
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        seekTo(displayTime + (e.key === 'ArrowRight' ? 10 : -10));
+        return;
+      }
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       switch (e.key) {
@@ -272,14 +320,6 @@ export function VideoPlayer(props: VideoPlayerProps) {
         case 'k':
           e.preventDefault();
           togglePlay();
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          seekTo(displayTime + 10);
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          seekTo(displayTime - 10);
           break;
         case 'ArrowUp':
           e.preventDefault();
@@ -299,11 +339,10 @@ export function VideoPlayer(props: VideoPlayerProps) {
           toggleFullscreen();
           break;
       }
-      wake();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [wake, toggleFullscreen, seekTo, displayTime]);
+  }, [toggleFullscreen, seekTo, displayTime]);
 
   // Track video element state.
   useEffect(() => {
@@ -323,6 +362,55 @@ export function VideoPlayer(props: VideoPlayerProps) {
         // Send absolute time so webtorrent prioritises the right pieces — in
         // remux mode v.currentTime is local to the current pipe.
         setStreamPosition(infoHash, fileIdx, v.currentTime + seekOffsetSeconds);
+      }
+      // Persist watch progress every 10s. Only after metadata lands and we
+      // have a real duration — the backend ignores updates without one.
+      if (
+        magnetUri &&
+        tmdbId > 0 &&
+        v.duration > 0 &&
+        now - persistThrottle.current > 10_000
+      ) {
+        persistThrottle.current = now;
+        const abs = v.currentTime + seekOffsetSeconds;
+        const dur = effectiveDuration || v.duration;
+        if (!finishedRef.current && abs / dur >= 0.9) {
+          finishedRef.current = true;
+          void relaxClient.deleteWatchProgress({
+            mediaId: String(tmdbId),
+            mediaType,
+            season,
+            episode,
+          }).catch(() => {});
+          // Tell the engine to wipe the cached files on stop (next navigate-back).
+          void markCacheFinished(infoHash);
+        } else if (!finishedRef.current) {
+          void relaxClient.upsertWatchProgress({
+            progress: {
+              mediaId: String(tmdbId),
+              mediaType,
+              title,
+              posterUrl: posterUrl ?? '',
+              season,
+              episode,
+              positionSeconds: abs,
+              durationSeconds: v.duration,
+              infoHash,
+              fileIdx,
+              magnetUri,
+            },
+          }).catch(() => {});
+        }
+      }
+    };
+    const onEnded = () => {
+      if (tmdbId > 0) {
+        void relaxClient.deleteWatchProgress({
+          mediaId: String(tmdbId),
+          mediaType,
+          season,
+          episode,
+        }).catch(() => {});
       }
     };
     const onDuration = () => setDuration(v.duration || 0);
@@ -350,6 +438,19 @@ export function VideoPlayer(props: VideoPlayerProps) {
     const onRate = () => setRate(v.playbackRate);
     const onMeta = () => {
       setDuration(v.duration || 0);
+      // Apply resume position once on the first playable load. Subsequent
+      // src swaps (audio change / remux seek) keep their explicit offsets
+      // via seekOffsetSeconds.
+      if (!resumeAppliedRef.current && resumeSeconds && resumeSeconds > 0) {
+        resumeAppliedRef.current = true;
+        if (needsRemux) {
+          // Remux mode: seekTo will fire a new ?t= URL; until then leave the
+          // display offset where it lands.
+          seekTo(resumeSeconds);
+        } else {
+          try { v.currentTime = resumeSeconds; } catch { /* noop */ }
+        }
+      }
       // After a src swap (audio change / remux seek), keep playing.
       if (v.paused) void v.play();
     };
@@ -374,6 +475,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
     v.addEventListener('volumechange', onVolume);
     v.addEventListener('ratechange', onRate);
     v.addEventListener('loadedmetadata', onMeta);
+    v.addEventListener('ended', onEnded);
     v.addEventListener('error', onError);
     return () => {
       v.removeEventListener('play', onPlay);
@@ -387,9 +489,14 @@ export function VideoPlayer(props: VideoPlayerProps) {
       v.removeEventListener('volumechange', onVolume);
       v.removeEventListener('ratechange', onRate);
       v.removeEventListener('loadedmetadata', onMeta);
+      v.removeEventListener('ended', onEnded);
       v.removeEventListener('error', onError);
     };
-  }, [infoHash, fileIdx, initialBufferReady, streamUrl]);
+  }, [
+    infoHash, fileIdx, initialBufferReady, streamUrl,
+    seekOffsetSeconds, magnetUri, tmdbId, mediaType, title, posterUrl,
+    season, episode, resumeSeconds, needsRemux, seekTo,
+  ]);
 
   // Fullscreen observer.
   useEffect(() => {
@@ -397,6 +504,27 @@ export function VideoPlayer(props: VideoPlayerProps) {
     document.addEventListener('fullscreenchange', onFs);
     return () => document.removeEventListener('fullscreenchange', onFs);
   }, []);
+
+  // Mouse-wheel volume. Needs a non-passive listener — React's synthetic
+  // onWheel is passive and can't preventDefault the page scroll.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const v = videoRef.current;
+      if (!v) return;
+      const next = Math.max(0, Math.min(1, v.volume + (e.deltaY > 0 ? -0.05 : 0.05)));
+      v.volume = next;
+      v.muted = next === 0;
+      setVolumeHud(next);
+      if (volumeHudTimer.current) clearTimeout(volumeHudTimer.current);
+      volumeHudTimer.current = setTimeout(() => setVolumeHud(null), 900);
+      wake();
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [wake]);
 
   const setPlaybackRate = useCallback((r: number) => {
     const v = videoRef.current;
@@ -480,7 +608,9 @@ export function VideoPlayer(props: VideoPlayerProps) {
       onDoubleClick={(e) => {
         if (e.target === e.currentTarget) handlePlayerDoubleClick();
       }}
-      className="fixed inset-0 z-50 flex h-screen w-screen items-center justify-center bg-black text-neutral-100"
+      className={`fixed inset-0 z-50 flex h-screen w-screen items-center justify-center bg-black text-neutral-100 ${
+        showControls ? '' : 'cursor-none'
+      }`}
     >
       {streamUrl && initialBufferReady ? (
         <video
@@ -561,6 +691,16 @@ export function VideoPlayer(props: VideoPlayerProps) {
       {(reBuffering || audioSwitching) && initialBufferReady && (
         <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/70 px-4 py-2 text-xs text-neutral-200 ring-1 ring-white/10">
           {audioSwitching ? 'Switching audio…' : 'Buffering…'}
+        </div>
+      )}
+
+      {volumeHud !== null && (
+        <div className="pointer-events-none absolute left-1/2 top-1/2 z-30 flex -translate-x-1/2 -translate-y-1/2 items-center gap-3 rounded-full bg-black/75 px-5 py-3 text-sm text-neutral-100 ring-1 ring-white/10">
+          {volumeHud === 0 ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+          <div className="h-1.5 w-32 overflow-hidden rounded-full bg-white/15">
+            <div className="h-full rounded-full bg-accent" style={{ width: `${Math.round(volumeHud * 100)}%` }} />
+          </div>
+          <span className="tabular-nums">{Math.round(volumeHud * 100)}%</span>
         </div>
       )}
 

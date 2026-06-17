@@ -35,6 +35,7 @@ export function WatchSidebar({ detail, onClose }: WatchSidebarProps) {
       mediaType: summary.mediaType,
       season: seasonEp?.season ?? 0,
       episode: seasonEp?.episode ?? 0,
+      posterUrl: summary.posterUrl,
     };
     navigate(`/watch/${stream.infoHash}`, { state });
   };

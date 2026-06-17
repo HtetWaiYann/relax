@@ -18,6 +18,7 @@ import (
 	"relax/internal/config"
 	"relax/internal/metadata"
 	"relax/internal/server"
+	"relax/internal/storage"
 	"relax/internal/streams/torrentio"
 	"relax/internal/subtitles"
 	"relax/internal/subtitles/opensubtitles"
@@ -53,7 +54,13 @@ func run() error {
 		subtitleProviders = append(subtitleProviders, opensubtitles.New(cfg.OpenSubtitlesAPIKey))
 	}
 
-	relaxSrv := server.NewRelaxServer(logger, meta, streamsProvider, subtitleProviders, cfg.SubtitleCacheDir, cfg.Port)
+	store, err := storage.New(cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer store.Close()
+
+	relaxSrv := server.NewRelaxServer(logger, meta, streamsProvider, subtitleProviders, cfg.SubtitleCacheDir, cfg.Port, store)
 	path, handler := relaxv1connect.NewRelaxServiceHandler(relaxSrv)
 
 	if err := os.MkdirAll(cfg.SubtitleCacheDir, 0o755); err != nil {

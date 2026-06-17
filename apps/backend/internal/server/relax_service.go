@@ -11,9 +11,14 @@ import (
 	relaxv1 "relax/gen/relax/v1"
 	"relax/gen/relax/v1/relaxv1connect"
 	"relax/internal/metadata"
+	"relax/internal/storage"
 	"relax/internal/streams"
 	"relax/internal/subtitles"
 )
+
+// MinPersistSeconds: don't persist accidental clicks/auto-plays as resume
+// points. Mirrors the spec — position > 5s and a known duration.
+const MinPersistSeconds = 5.0
 
 // RelaxServer is a partial implementation of relaxv1connect.RelaxServiceHandler.
 // Metadata RPCs (GetHomeSections/SearchMedia/GetMediaDetail) use a real TMDB
@@ -25,6 +30,7 @@ type RelaxServer struct {
 	subtitles     map[string]subtitles.Provider // keyed by Provider.Name()
 	subtitleCache string
 	port          int
+	store         storage.Store
 }
 
 var _ relaxv1connect.RelaxServiceHandler = (*RelaxServer)(nil)
@@ -36,6 +42,7 @@ func NewRelaxServer(
 	subtitleProviders []subtitles.Provider,
 	subtitleCache string,
 	port int,
+	store storage.Store,
 ) *RelaxServer {
 	providers := make(map[string]subtitles.Provider, len(subtitleProviders))
 	for _, p := range subtitleProviders {
@@ -51,6 +58,7 @@ func NewRelaxServer(
 		subtitles:     providers,
 		subtitleCache: subtitleCache,
 		port:          port,
+		store:         store,
 	}
 }
 
@@ -142,10 +150,10 @@ func (s *RelaxServer) GetMetadata(
 	}), nil
 }
 
-func (s *RelaxServer) SaveWatchProgress(
-	_ context.Context,
-	req *connect.Request[relaxv1.SaveWatchProgressRequest],
-) (*connect.Response[relaxv1.SaveWatchProgressResponse], error) {
+func (s *RelaxServer) UpsertWatchProgress(
+	ctx context.Context,
+	req *connect.Request[relaxv1.UpsertWatchProgressRequest],
+) (*connect.Response[relaxv1.UpsertWatchProgressResponse], error) {
 	p := req.Msg.GetProgress()
 	if p == nil {
 		return nil, invalidArg("progress is required")
@@ -153,27 +161,105 @@ func (s *RelaxServer) SaveWatchProgress(
 	if err := requireNonEmpty("media_id", p.GetMediaId()); err != nil {
 		return nil, err
 	}
-	if p.GetLastWatchedAt() == nil {
-		p.LastWatchedAt = timestamppb.Now()
+	if p.GetPositionSeconds() <= MinPersistSeconds || p.GetDurationSeconds() <= 0 {
+		return connect.NewResponse(&relaxv1.UpsertWatchProgressResponse{}), nil
 	}
-	return connect.NewResponse(&relaxv1.SaveWatchProgressResponse{Progress: p}), nil
+	if err := requireNonEmpty("magnet_uri", p.GetMagnetUri()); err != nil {
+		return nil, err
+	}
+	last := time.Now().UTC()
+	if ts := p.GetLastWatchedAt(); ts != nil {
+		last = ts.AsTime()
+	}
+	if err := s.store.Upsert(ctx, storage.WatchProgress{
+		MediaID:         p.GetMediaId(),
+		MediaType:       int32(p.GetMediaType()),
+		Title:           p.GetTitle(),
+		PosterURL:       p.GetPosterUrl(),
+		Season:          p.GetSeason(),
+		Episode:         p.GetEpisode(),
+		PositionSeconds: p.GetPositionSeconds(),
+		DurationSeconds: p.GetDurationSeconds(),
+		LastWatchedAt:   last,
+		InfoHash:        p.GetInfoHash(),
+		FileIdx:         p.GetFileIdx(),
+		MagnetURI:       p.GetMagnetUri(),
+	}); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&relaxv1.UpsertWatchProgressResponse{}), nil
 }
 
 func (s *RelaxServer) GetWatchProgress(
-	_ context.Context,
+	ctx context.Context,
 	req *connect.Request[relaxv1.GetWatchProgressRequest],
 ) (*connect.Response[relaxv1.GetWatchProgressResponse], error) {
 	if err := requireNonEmpty("media_id", req.Msg.GetMediaId()); err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&relaxv1.GetWatchProgressResponse{
-		Progress: &relaxv1.WatchProgress{
-			MediaId:         req.Msg.GetMediaId(),
-			PositionSeconds: 0,
-			DurationSeconds: 0,
-			LastWatchedAt:   timestamppb.Now(),
-		},
-	}), nil
+	p, found, err := s.store.Get(ctx, req.Msg.GetMediaId(), int32(req.Msg.GetMediaType()), req.Msg.GetSeason(), req.Msg.GetEpisode())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	if !found {
+		return connect.NewResponse(&relaxv1.GetWatchProgressResponse{Found: false}), nil
+	}
+	return connect.NewResponse(&relaxv1.GetWatchProgressResponse{Progress: toProto(p), Found: true}), nil
+}
+
+func (s *RelaxServer) GetWatchHistory(
+	ctx context.Context,
+	req *connect.Request[relaxv1.GetWatchHistoryRequest],
+) (*connect.Response[relaxv1.GetWatchHistoryResponse], error) {
+	rows, total, err := s.store.History(ctx, int(req.Msg.GetLimit()), int(req.Msg.GetOffset()))
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	items := make([]*relaxv1.WatchProgress, len(rows))
+	for i, r := range rows {
+		items[i] = toProto(r)
+	}
+	return connect.NewResponse(&relaxv1.GetWatchHistoryResponse{Items: items, TotalCount: int32(total)}), nil
+}
+
+func (s *RelaxServer) DeleteWatchProgress(
+	ctx context.Context,
+	req *connect.Request[relaxv1.DeleteWatchProgressRequest],
+) (*connect.Response[relaxv1.DeleteWatchProgressResponse], error) {
+	if err := requireNonEmpty("media_id", req.Msg.GetMediaId()); err != nil {
+		return nil, err
+	}
+	if err := s.store.Delete(ctx, req.Msg.GetMediaId(), int32(req.Msg.GetMediaType()), req.Msg.GetSeason(), req.Msg.GetEpisode()); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&relaxv1.DeleteWatchProgressResponse{}), nil
+}
+
+func (s *RelaxServer) ClearWatchHistory(
+	ctx context.Context,
+	_ *connect.Request[relaxv1.ClearWatchHistoryRequest],
+) (*connect.Response[relaxv1.ClearWatchHistoryResponse], error) {
+	if err := s.store.Clear(ctx); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&relaxv1.ClearWatchHistoryResponse{}), nil
+}
+
+func toProto(p storage.WatchProgress) *relaxv1.WatchProgress {
+	return &relaxv1.WatchProgress{
+		MediaId:         p.MediaID,
+		MediaType:       relaxv1.MediaType(p.MediaType),
+		Title:           p.Title,
+		PosterUrl:       p.PosterURL,
+		Season:          p.Season,
+		Episode:         p.Episode,
+		PositionSeconds: p.PositionSeconds,
+		DurationSeconds: p.DurationSeconds,
+		LastWatchedAt:   timestamppb.New(p.LastWatchedAt),
+		InfoHash:        p.InfoHash,
+		FileIdx:         p.FileIdx,
+		MagnetUri:       p.MagnetURI,
+	}
 }
 
 func (s *RelaxServer) StreamTorrentProgress(

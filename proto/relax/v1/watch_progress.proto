@@ -3,12 +3,21 @@ syntax = "proto3";
 package relax.v1;
 
 import "google/protobuf/timestamp.proto";
+import "relax/v1/media.proto";
 
 option go_package = "relax/gen/relax/v1;relaxv1";
 
 message WatchProgress {
   string media_id = 1;
-  int64 position_seconds = 2;
-  int64 duration_seconds = 3;
-  google.protobuf.Timestamp last_watched_at = 4;
+  MediaType media_type = 2;
+  string title = 3;
+  string poster_url = 4;
+  int32 season = 5;
+  int32 episode = 6;
+  double position_seconds = 7;
+  double duration_seconds = 8;
+  google.protobuf.Timestamp last_watched_at = 9;
+  string info_hash = 10;
+  int32 file_idx = 11;
+  string magnet_uri = 12;
 }

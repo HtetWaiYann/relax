@@ -4,7 +4,15 @@
 // provider can satisfy the same start/stop/stats/subtitles contract.
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { mkdirSync, existsSync } from 'node:fs';
+import {
+  mkdirSync,
+  existsSync,
+  statSync,
+  readdirSync,
+  rmSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { app, ipcMain, type WebContents } from 'electron';
 import process from 'node:process';
@@ -25,15 +33,24 @@ import {
 } from './ffmpeg';
 
 const STREAM_PORT = Number(process.env['STREAM_PORT'] ?? 8088);
-const KEEP_DOWNLOADS = process.env['KEEP_DOWNLOADS'] !== 'false';
+const KEEP_DOWNLOADS = import.meta.env.MAIN_VITE_KEEP_DOWNLOADS !== 'false';
+
 // ~15s @ ~6 Mbps bitrate. Tune later if needed.
 const INITIAL_BUFFER_BYTES = Number(process.env['INITIAL_BUFFER_BYTES'] ?? 12 * 1024 * 1024);
+// ponytail: window is for resume hinting, not for active eviction.
+// KEEP_DOWNLOADS=true is the lazy implementation of "keep pieces around
+// the position" — webtorrent already detects existing pieces on disk on
+// re-add, so resume reads from cache directly.
+const CACHE_WINDOW_MB = Number(process.env['CACHE_WINDOW_MB'] ?? 50);
 const STATS_INTERVAL_MS = 1000;
 
 interface StartArgs {
   infoHash: string;
   fileIdx: number;
   magnetUri: string;
+  positionSeconds?: number;
+  title?: string;
+  posterUrl?: string;
 }
 
 interface StartResult {
@@ -104,6 +121,57 @@ type FileLike = any;
 const downloadDir = join(app.getPath('userData'), 'torrents');
 mkdirSync(downloadDir, { recursive: true });
 
+// Sidecar JSON mapping infoHash -> display metadata. Lets the Settings page
+// show poster/title for each cached torrent without coupling Go's storage
+// layer to Electron's userData layout.
+// ponytail: tiny JSON beats a second DB; rewritten in-place on each start.
+const cacheIndexPath = join(app.getPath('userData'), 'cache_index.json');
+interface CacheIndexEntry {
+  infoHash: string;
+  torrentName: string;
+  title: string;
+  posterUrl: string;
+  lastAccessedAt: number;
+}
+function readCacheIndex(): Record<string, CacheIndexEntry> {
+  try {
+    return JSON.parse(readFileSync(cacheIndexPath, 'utf8')) as Record<string, CacheIndexEntry>;
+  } catch {
+    return {};
+  }
+}
+function writeCacheIndex(idx: Record<string, CacheIndexEntry>) {
+  try {
+    writeFileSync(cacheIndexPath, JSON.stringify(idx));
+  } catch (err) {
+    console.warn('[torrent] cache_index write failed', err);
+  }
+}
+function touchCacheEntry(partial: Partial<CacheIndexEntry> & { infoHash: string }) {
+  const idx = readCacheIndex();
+  const prev = idx[partial.infoHash] ?? { infoHash: partial.infoHash, torrentName: '', title: '', posterUrl: '', lastAccessedAt: 0 };
+  idx[partial.infoHash] = { ...prev, ...partial, lastAccessedAt: Date.now() };
+  writeCacheIndex(idx);
+}
+
+// Persisted user setting for auto-eviction. 0 = disabled.
+const cacheSettingsPath = join(app.getPath('userData'), 'cache_settings.json');
+interface CacheSettings { ttlDays: number }
+function readCacheSettings(): CacheSettings {
+  try { return JSON.parse(readFileSync(cacheSettingsPath, 'utf8')) as CacheSettings; }
+  catch { return { ttlDays: 0 }; }
+}
+function writeCacheSettings(s: CacheSettings) {
+  try { writeFileSync(cacheSettingsPath, JSON.stringify(s)); }
+  catch (err) { console.warn('[torrent] cache_settings write failed', err); }
+}
+
+// Marked-as-finished hashes — stop() destroys the store for these even when
+// KEEP_DOWNLOADS=true. In-memory only: the renderer marks at 90% playback
+// and stop() runs on navigate-back, so persistence across app restarts isn't
+// needed (a re-launched session never triggers stop without first playing).
+const finishedHashes = new Set<string>();
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let client: any | null = null;
 const sessions = new Map<string, Session>();
@@ -163,24 +231,34 @@ function absoluteFilePath(torrent: TorrentLike, file: FileLike): string {
 // ponytail: drain a leading read-stream to force the first N bytes to download
 // sequentially. Browser range requests later pull on demand, which webtorrent
 // turns into piece criticals — so the look-ahead window follows playback.
+// Probe is kicked in parallel as soon as enough header is on disk — running
+// it in series with the full prebuffer drain was the main cause of the
+// extra "initial buffering" wall time after this commit landed.
+const PROBE_TRIGGER_BYTES = 2 * 1024 * 1024;
 function primeInitialBuffer(file: FileLike, sess: Session, onUpdate: () => void) {
   const end = Math.min(INITIAL_BUFFER_BYTES, file.length) - 1;
   const stream = file.createReadStream({ start: 0, end });
+  let probeKicked = false;
+  const kickProbe = () => {
+    if (probeKicked) return;
+    probeKicked = true;
+    void ensureProbe(sess);
+  };
   stream.on('data', (chunk: Buffer) => {
     sess.initialDownloaded += chunk.length;
     onUpdate();
+    if (sess.initialDownloaded >= PROBE_TRIGGER_BYTES) kickProbe();
   });
   stream.on('end', () => {
     sess.bufferingComplete = true;
     onUpdate();
-    // Kick off the probe once we have enough header on disk.
-    void ensureProbe(sess);
+    kickProbe();
   });
   stream.on('error', (err: Error) => {
     console.warn('[torrent] prebuffer error', err);
     sess.bufferingComplete = true;
     onUpdate();
-    void ensureProbe(sess);
+    kickProbe();
   });
 }
 
@@ -283,12 +361,136 @@ async function start(args: StartArgs): Promise<StartResult> {
     primeInitialBuffer(file, sess, tick);
   }
 
+  // Mark the cache entry so the Settings page can show it. Title/poster are
+  // best-effort; on plain Start they may be empty, on Resume they come from
+  // the watch_progress row the caller pulled.
+  touchCacheEntry({
+    infoHash: args.infoHash,
+    torrentName: torrent.name ?? '',
+    title: args.title ?? '',
+    posterUrl: args.posterUrl ?? '',
+  });
+
+  // Resume hint: nudge piece priorities toward the resume byte. webtorrent
+  // detects on-disk pieces and reads them straight from the file — the cache
+  // window is implicit, not actively trimmed.
+  if (args.positionSeconds && args.positionSeconds > 0) {
+    void setPosition(args.infoHash, fileIdx, args.positionSeconds);
+  }
+
+  // For passthrough mode the renderer seeks via video.currentTime after
+  // loadedmetadata. For remux mode we'd embed ?t=, but we can't tell remux
+  // vs passthrough until probe lands — the renderer handles either path.
   return {
     streamUrl: `http://localhost:${STREAM_PORT}/stream/${args.infoHash}/${fileIdx}`,
     torrentName: torrent.name ?? '',
     fileName: file.name,
     totalSizeBytes: file.length,
   };
+}
+
+interface CacheStatsResult {
+  totalAppBytes: number;
+  cacheBytes: number;
+  dbBytes: number;
+  entries: Array<{
+    infoHash: string;
+    torrentName: string;
+    title: string;
+    posterUrl: string;
+    cachedBytes: number;
+    lastAccessedAt: number;
+  }>;
+}
+
+function dirSize(p: string): number {
+  let total = 0;
+  let st;
+  try { st = statSync(p); } catch { return 0; }
+  if (st.isFile()) return st.size;
+  if (!st.isDirectory()) return 0;
+  for (const name of readdirSync(p)) total += dirSize(join(p, name));
+  return total;
+}
+
+function getCacheStats(): CacheStatsResult {
+  const idx = readCacheIndex();
+  const userData = app.getPath('userData');
+  const dbPath = join(userData, 'relax.db');
+  const cacheBytes = dirSize(downloadDir);
+  const totalAppBytes = dirSize(userData);
+  const dbBytes = (() => { try { return statSync(dbPath).size; } catch { return 0; } })();
+
+  const entries: CacheStatsResult['entries'] = [];
+  const seenNames = new Set<string>();
+  for (const e of Object.values(idx)) {
+    const dir = e.torrentName ? join(downloadDir, e.torrentName) : '';
+    const cachedBytes = dir ? dirSize(dir) : 0;
+    if (cachedBytes <= 0) continue;
+    seenNames.add(e.torrentName);
+    entries.push({
+      infoHash: e.infoHash,
+      torrentName: e.torrentName,
+      title: e.title || e.torrentName,
+      posterUrl: e.posterUrl,
+      cachedBytes,
+      lastAccessedAt: e.lastAccessedAt,
+    });
+  }
+  // ponytail: also surface orphan on-disk folders (started before index existed).
+  try {
+    for (const name of readdirSync(downloadDir)) {
+      if (seenNames.has(name)) continue;
+      const dir = join(downloadDir, name);
+      const cachedBytes = dirSize(dir);
+      if (cachedBytes <= 0) continue;
+      entries.push({
+        infoHash: '',
+        torrentName: name,
+        title: name,
+        posterUrl: '',
+        cachedBytes,
+        lastAccessedAt: (() => { try { return statSync(dir).mtimeMs; } catch { return 0; } })(),
+      });
+    }
+  } catch { /* downloadDir missing — fine */ }
+  entries.sort((a, b) => b.cachedBytes - a.cachedBytes);
+  return { totalAppBytes, cacheBytes, dbBytes, entries };
+}
+
+async function clearCache(infoHash?: string): Promise<{ freedBytes: number }> {
+  let freedBytes = 0;
+  const idx = readCacheIndex();
+  if (infoHash) {
+    const entry = idx[infoHash];
+    if (entry?.torrentName) {
+      const dir = join(downloadDir, entry.torrentName);
+      freedBytes += dirSize(dir);
+      // Also destroy the running torrent if it exists.
+      const t = await getTorrent(infoHash);
+      if (t) {
+        await new Promise<void>((resolve) => client.remove(infoHash, { destroyStore: true }, () => resolve()));
+      } else {
+        try { rmSync(dir, { recursive: true, force: true }); } catch { /* noop */ }
+      }
+      delete idx[infoHash];
+      writeCacheIndex(idx);
+    }
+    return { freedBytes };
+  }
+  // Full wipe.
+  freedBytes += dirSize(downloadDir);
+  // Remove all active torrents first.
+  if (client) {
+    const torrents = (client.torrents as TorrentLike[]) ?? [];
+    await Promise.all(torrents.map((t) =>
+      new Promise<void>((resolve) => client.remove(t.infoHash, { destroyStore: true }, () => resolve())),
+    ));
+  }
+  try { rmSync(downloadDir, { recursive: true, force: true }); } catch { /* noop */ }
+  mkdirSync(downloadDir, { recursive: true });
+  writeCacheIndex({});
+  return { freedBytes };
 }
 
 async function stop(infoHash: string): Promise<void> {
@@ -299,10 +501,50 @@ async function stop(infoHash: string): Promise<void> {
   if (!client) return;
   const torrent = await getTorrent(infoHash);
   if (!torrent) return;
-  // KEEP_DOWNLOADS: keep files on disk; just destroy the network connections.
+  // Finished (>=90% watched) overrides KEEP_DOWNLOADS — free disk once the
+  // viewer is unlikely to come back.
+  const destroyStore = finishedHashes.has(infoHash) || !KEEP_DOWNLOADS;
   await new Promise<void>((resolve) => {
-    client.remove(infoHash, { destroyStore: !KEEP_DOWNLOADS }, () => resolve());
+    client.remove(infoHash, { destroyStore }, () => resolve());
   });
+  if (destroyStore) {
+    finishedHashes.delete(infoHash);
+    const idx = readCacheIndex();
+    if (idx[infoHash]) { delete idx[infoHash]; writeCacheIndex(idx); }
+  }
+}
+
+// Walk the cache index and remove entries older than the configured TTL.
+// Skips anything with an active session (currently playing).
+function evictOldEntries() {
+  const { ttlDays } = readCacheSettings();
+  if (ttlDays <= 0) return;
+  const cutoff = Date.now() - ttlDays * 86_400_000;
+  const idx = readCacheIndex();
+  let changed = false;
+  for (const [hash, e] of Object.entries(idx)) {
+    if (sessions.has(hash)) continue;
+    if (e.lastAccessedAt > cutoff) continue;
+    if (e.torrentName) {
+      try { rmSync(join(downloadDir, e.torrentName), { recursive: true, force: true }); }
+      catch { /* noop */ }
+    }
+    delete idx[hash];
+    changed = true;
+  }
+  // ponytail: orphan dirs (started before index existed) — judge by mtime.
+  try {
+    const indexedNames = new Set(Object.values(idx).map((e) => e.torrentName));
+    for (const name of readdirSync(downloadDir)) {
+      if (indexedNames.has(name)) continue;
+      const dir = join(downloadDir, name);
+      try {
+        const st = statSync(dir);
+        if (st.mtimeMs <= cutoff) rmSync(dir, { recursive: true, force: true });
+      } catch { /* noop */ }
+    }
+  } catch { /* noop */ }
+  if (changed) writeCacheIndex(idx);
 }
 
 async function setPosition(infoHash: string, fileIdx: number, positionSeconds: number) {
@@ -403,9 +645,11 @@ async function getSubtitles(infoHash: string, fileIdx: number): Promise<Subtitle
   const loose = findSubtitleFiles(t, fileIdx);
   const sess = sessions.get(infoHash);
   if (!sess) return loose;
-  // Probe may still be in flight; await it so callers see the full list.
-  await ensureProbe(sess);
-  return [...loose, ...mkvEmbeddedSubs(infoHash, sess)];
+  // ponytail: never await the probe here — the renderer fires this on mount
+  // and we don't want subtitle discovery to delay playback. If the probe has
+  // landed, include MKV-embedded streams; otherwise the renderer re-polls
+  // once probe completes (see VideoPlayer.tsx).
+  return sess.probe ? [...loose, ...mkvEmbeddedSubs(infoHash, sess)] : loose;
 }
 
 async function getAudioTracks(infoHash: string, fileIdx: number): Promise<AudioTrack[]> {
@@ -490,8 +734,11 @@ async function handleStream(
     return;
   }
   const sess = sessions.get(infoHash);
-  // Probe may be still in flight; only block remux paths on it.
-  if (sess && !sess.probe) await ensureProbe(sess);
+  // Don't await probe — it was kicked during prebuffer and is almost always
+  // ready by now. If not, serve passthrough; the file is most likely a
+  // Chromium-native codec (which is what passthrough handles correctly).
+  // Files that genuinely need remux (EAC3/DTS/TrueHD) race-lose this on
+  // very fast first requests, but probe completes within ms after that.
 
   const audios = audioStreams(sess?.probe ?? null);
   const selectedAudio = audios.find((a) => a.typeIndex === (sess?.selectedAudioTypeIdx ?? 0));
@@ -697,6 +944,25 @@ export const STREAM_BASE_URL = `http://localhost:${STREAM_PORT}`;
 export function registerTorrentIpc() {
   ipcMain.handle('torrent:start', async (_e, args: StartArgs) => start(args));
   ipcMain.handle('torrent:stop', async (_e, infoHash: string) => stop(infoHash));
+  ipcMain.handle('cache:stats', async () => getCacheStats());
+  ipcMain.handle('cache:clear', async (_e, infoHash?: string) => clearCache(infoHash));
+  ipcMain.handle('cache:mark-finished', async (_e, infoHash: string) => {
+    finishedHashes.add(infoHash.toLowerCase());
+  });
+  ipcMain.handle('cache:get-ttl-days', async () => readCacheSettings().ttlDays);
+  ipcMain.handle('cache:set-ttl-days', async (_e, days: number) => {
+    writeCacheSettings({ ttlDays: Math.max(0, Math.floor(days)) });
+    evictOldEntries();
+  });
+  // Run eviction once at startup and hourly thereafter.
+  setTimeout(evictOldEntries, 30_000);
+  setInterval(evictOldEntries, 60 * 60 * 1000);
+  ipcMain.handle('app:paths', async () => ({
+    userData: app.getPath('userData'),
+    torrents: downloadDir,
+    cacheWindowMb: CACHE_WINDOW_MB,
+    keepDownloads: KEEP_DOWNLOADS,
+  }));
   ipcMain.handle('torrent:set-position', async (_e, args: { infoHash: string; fileIdx: number; positionSeconds: number }) =>
     setPosition(args.infoHash, args.fileIdx, args.positionSeconds),
   );

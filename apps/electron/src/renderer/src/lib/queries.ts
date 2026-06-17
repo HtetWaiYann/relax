@@ -1,5 +1,5 @@
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { MediaType } from '@relax/types';
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { MediaType, type WatchProgress } from '@relax/types';
 import { relaxClient } from './client';
 
 const HOME_KEY = ['home'] as const;
@@ -92,6 +92,38 @@ export function usePersonDetail(personId: number) {
     queryFn: () => relaxClient.getPersonDetail({ personId }),
     enabled: personId > 0,
     staleTime: 10 * 60_000,
+  });
+}
+
+const HISTORY_KEY = ['watch-history'] as const;
+
+export function useWatchHistory(limit = 20) {
+  return useQuery({
+    queryKey: [...HISTORY_KEY, limit],
+    queryFn: () => relaxClient.getWatchHistory({ limit, offset: 0 }),
+    staleTime: 30_000,
+  });
+}
+
+export function useDeleteWatchProgress() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: Pick<WatchProgress, 'mediaId' | 'mediaType' | 'season' | 'episode'>) =>
+      relaxClient.deleteWatchProgress({
+        mediaId: p.mediaId,
+        mediaType: p.mediaType,
+        season: p.season,
+        episode: p.episode,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: HISTORY_KEY }),
+  });
+}
+
+export function useClearWatchHistory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => relaxClient.clearWatchHistory({}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: HISTORY_KEY }),
   });
 }
 

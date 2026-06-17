@@ -2,13 +2,57 @@ import { app, BrowserWindow, session, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import process from 'node:process';
+import net from 'node:net';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { registerTorrentIpc, startStreamServer, STREAM_BASE_URL } from './torrent';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const RENDERER_DEV_URL = process.env['ELECTRON_RENDERER_URL'];
-const BACKEND_URL = process.env['BACKEND_URL'] ?? 'http://localhost:8080';
 const isDev = !!RENDERER_DEV_URL;
+// Populated by startBackendSidecar() in packaged mode; falls back to the
+// dev-time default when an external `pnpm dev` backend is running.
+let BACKEND_URL = process.env['BACKEND_URL'] ?? 'http://localhost:8080';
+let backendProc: ChildProcess | null = null;
+
+async function pickFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.unref();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const port = (srv.address() as net.AddressInfo).port;
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+async function startBackendSidecar(): Promise<void> {
+  if (!app.isPackaged) return; // dev: user runs `pnpm dev` (turbo starts backend separately)
+  const exe = process.platform === 'win32' ? 'relaxd.exe' : 'relaxd';
+  const binPath = join(process.resourcesPath, 'bin', exe);
+  const port = await pickFreePort();
+  BACKEND_URL = `http://127.0.0.1:${port}`;
+  process.env['BACKEND_URL'] = BACKEND_URL;
+  backendProc = spawn(binPath, [], {
+    cwd: dirname(binPath), // so godotenv.Load() finds the .env we bundled next to the binary
+    env: {
+      ...process.env,
+      PORT: String(port),
+      // ponytail: wildcard + loopback bind = good enough; tighten if backend ever leaves 127.0.0.1.
+      ALLOWED_ORIGIN: '*',
+      APP_ENV: 'production',
+      DATABASE_URL: join(app.getPath('userData'), 'relax.db'),
+      SUBTITLE_CACHE_DIR: join(app.getPath('userData'), 'subtitle_cache'),
+    },
+    stdio: 'inherit',
+    windowsHide: true,
+  });
+  backendProc.on('exit', (code, signal) => {
+    console.error('[electron] backend exited', { code, signal });
+    backendProc = null;
+  });
+}
 
 // Resolve icon from resources/ next to the project root when in dev,
 // or from process.resourcesPath when packaged.
@@ -23,7 +67,7 @@ const iconPath = process.platform === 'darwin'
 
 function createWindow() {
   const win = new BrowserWindow({
-    title: 'RELAX',
+    title: 'Relax',
     icon: iconPath,
     width: 1280,
     height: 800,
@@ -37,6 +81,7 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false,
       webSecurity: true,
+      additionalArguments: [`--backend-url=${BACKEND_URL}`],
     },
   });
 
@@ -93,8 +138,9 @@ function applyContentSecurityPolicy() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (process.platform === 'darwin') app.dock?.setIcon(join(iconBase, 'icon.png'));
+  await startBackendSidecar();
   applyContentSecurityPolicy();
   registerTorrentIpc();
   startStreamServer();
@@ -103,6 +149,10 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on('will-quit', () => {
+  if (backendProc && !backendProc.killed) backendProc.kill();
 });
 
 app.on('window-all-closed', () => {

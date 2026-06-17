@@ -1,11 +1,43 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-const BACKEND_URL = process.env['BACKEND_URL'] ?? 'http://localhost:8080';
+// Main passes the live backend URL via webPreferences.additionalArguments in
+// packaged mode (dynamic port). Falls back to env var for `pnpm dev`.
+function resolveBackendUrl(): string {
+  const fromArgv = process.argv.find(a => a.startsWith('--backend-url='));
+  if (fromArgv) return fromArgv.slice('--backend-url='.length);
+  return process.env['BACKEND_URL'] ?? 'http://localhost:8080';
+}
+
+const BACKEND_URL = resolveBackendUrl();
 
 export interface StartStreamArgs {
   infoHash: string;
   fileIdx: number;
   magnetUri: string;
+  positionSeconds?: number;
+  title?: string;
+  posterUrl?: string;
+}
+
+export interface CacheStats {
+  totalAppBytes: number;
+  cacheBytes: number;
+  dbBytes: number;
+  entries: Array<{
+    infoHash: string;
+    torrentName: string;
+    title: string;
+    posterUrl: string;
+    cachedBytes: number;
+    lastAccessedAt: number;
+  }>;
+}
+
+export interface AppPaths {
+  userData: string;
+  torrents: string;
+  cacheWindowMb: number;
+  keepDownloads: boolean;
 }
 
 export interface StartStreamResult {
@@ -51,7 +83,7 @@ export interface AudioTrack {
 
 const api = {
   getBackendUrl: (): string => BACKEND_URL,
-  getAppName: (): string => 'RELAX',
+  getAppName: (): string => 'Relax',
   torrent: {
     start: (args: StartStreamArgs): Promise<StartStreamResult> =>
       ipcRenderer.invoke('torrent:start', args),
@@ -90,6 +122,18 @@ const api = {
       atSeconds: number,
     ): Promise<{ streamUrl: string }> =>
       ipcRenderer.invoke('torrent:seek', { infoHash, fileIdx, atSeconds }),
+    getCacheStats: (): Promise<CacheStats> =>
+      ipcRenderer.invoke('cache:stats'),
+    clearCache: (infoHash?: string): Promise<{ freedBytes: number }> =>
+      ipcRenderer.invoke('cache:clear', infoHash),
+    markCacheFinished: (infoHash: string): Promise<void> =>
+      ipcRenderer.invoke('cache:mark-finished', infoHash),
+    getCacheTtlDays: (): Promise<number> =>
+      ipcRenderer.invoke('cache:get-ttl-days'),
+    setCacheTtlDays: (days: number): Promise<void> =>
+      ipcRenderer.invoke('cache:set-ttl-days', days),
+    getAppPaths: (): Promise<AppPaths> =>
+      ipcRenderer.invoke('app:paths'),
     subscribe: (
       infoHash: string,
       onStats: (stats: TorrentStatsEvent) => void,

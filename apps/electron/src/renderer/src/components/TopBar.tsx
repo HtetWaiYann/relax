@@ -1,6 +1,8 @@
 import { Link, NavLink } from 'react-router-dom';
+import { Settings as SettingsIcon } from 'lucide-react';
 import { APP_NAME } from '@relax/shared-utils';
 import { SearchBar } from './SearchBar';
+import logoUrl from '../assets/relax_logo.svg';
 
 const NAV = [
   { to: '/', label: 'Home', end: true },
@@ -14,7 +16,7 @@ export function TopBar() {
     <header className="sticky top-0 z-30 border-b border-border-subtle bg-surface/80 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-6">
         <Link to="/" className="flex items-center gap-2 text-neutral-100">
-          <img src="/relax_logo.svg" alt={APP_NAME} className="h-8 w-8" />
+          <img src={logoUrl} alt={APP_NAME} className="h-8 w-8" />
           <span className="text-base font-semibold tracking-tight">{APP_NAME}</span>
         </Link>
 
@@ -38,8 +40,22 @@ export function TopBar() {
           ))}
         </nav>
 
-        <div className="flex flex-1 justify-end">
+        <div className="flex flex-1 items-center justify-end gap-2">
           <SearchBar />
+          <NavLink
+            to="/settings"
+            aria-label="Settings"
+            className={({ isActive }) =>
+              [
+                'rounded-md p-2 transition',
+                isActive
+                  ? 'bg-accent-light/20 text-accent-light'
+                  : 'text-neutral-400 hover:bg-white/10 hover:text-neutral-100',
+              ].join(' ')
+            }
+          >
+            <SettingsIcon className="h-4 w-4" />
+          </NavLink>
         </div>
       </div>
     </header>

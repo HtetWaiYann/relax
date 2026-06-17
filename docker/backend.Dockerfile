@@ -17,7 +17,7 @@ COPY proto ./proto
 RUN buf generate
 
 # ---------- stage 2: build ----------
-FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
 WORKDIR /src
 
 # Module cache: copy go.mod/go.sum first so layers cache cleanly.

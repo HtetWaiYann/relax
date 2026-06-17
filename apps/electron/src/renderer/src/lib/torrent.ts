@@ -4,6 +4,30 @@ export interface StartStreamArgs {
   infoHash: string;
   fileIdx: number;
   magnetUri: string;
+  positionSeconds?: number;
+  title?: string;
+  posterUrl?: string;
+}
+
+export interface CacheStats {
+  totalAppBytes: number;
+  cacheBytes: number;
+  dbBytes: number;
+  entries: Array<{
+    infoHash: string;
+    torrentName: string;
+    title: string;
+    posterUrl: string;
+    cachedBytes: number;
+    lastAccessedAt: number;
+  }>;
+}
+
+export interface AppPaths {
+  userData: string;
+  torrents: string;
+  cacheWindowMb: number;
+  keepDownloads: boolean;
 }
 
 export interface StartStreamResult {
@@ -55,6 +79,12 @@ export interface TorrentBridge {
   getAudioTracks(infoHash: string, fileIdx: number): Promise<AudioTrack[]>;
   switchAudio(infoHash: string, fileIdx: number, typeIndex: number, atSeconds: number): Promise<{ streamUrl: string }>;
   seek(infoHash: string, fileIdx: number, atSeconds: number): Promise<{ streamUrl: string }>;
+  getCacheStats(): Promise<CacheStats>;
+  clearCache(infoHash?: string): Promise<{ freedBytes: number }>;
+  markCacheFinished(infoHash: string): Promise<void>;
+  getCacheTtlDays(): Promise<number>;
+  setCacheTtlDays(days: number): Promise<void>;
+  getAppPaths(): Promise<AppPaths>;
   subscribe(infoHash: string, onStats: (stats: TorrentStatsEvent) => void): () => void;
 }
 
@@ -144,6 +174,31 @@ export async function seekStreamUrl(
 ): Promise<string | null> {
   const res = await bridge()?.seek(infoHash, fileIdx, atSeconds);
   return res?.streamUrl ?? null;
+}
+
+export async function getCacheStats(): Promise<CacheStats | null> {
+  return bridge()?.getCacheStats() ?? null;
+}
+
+export async function clearCache(infoHash?: string): Promise<number> {
+  const res = await bridge()?.clearCache(infoHash);
+  return res?.freedBytes ?? 0;
+}
+
+export async function markCacheFinished(infoHash: string): Promise<void> {
+  await bridge()?.markCacheFinished(infoHash);
+}
+
+export async function getCacheTtlDays(): Promise<number> {
+  return (await bridge()?.getCacheTtlDays()) ?? 0;
+}
+
+export async function setCacheTtlDays(days: number): Promise<void> {
+  await bridge()?.setCacheTtlDays(days);
+}
+
+export async function getAppPaths(): Promise<AppPaths | null> {
+  return bridge()?.getAppPaths() ?? null;
 }
 
 export function useTorrentStats(infoHash: string | null): TorrentStatsEvent | null {
