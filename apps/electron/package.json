@@ -10,8 +10,8 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "dist": "pnpm --filter @relax/backend build:sidecar && electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
-    "dist:all": "TARGETS=darwin/arm64,darwin/amd64,linux/amd64,windows/amd64 pnpm --filter @relax/backend build:sidecar && electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder -mwl",
+    "dist": "electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
+    "dist:all": "electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false sh -c 'electron-builder --mac --arm64 && electron-builder --mac --x64 && electron-builder --linux && electron-builder --win'",
     "lint": "eslint src --max-warnings=0 || true",
     "test": "echo \"no tests yet\" && exit 0",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
@@ -31,6 +31,7 @@
     "directories": {
       "output": "dist"
     },
+    "beforePack": "./scripts/before-pack.cjs",
     "files": [
       "out/**/*",
       "!**/.turbo/**",

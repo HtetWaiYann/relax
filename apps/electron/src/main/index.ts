@@ -32,7 +32,7 @@ async function startBackendSidecar(): Promise<void> {
   const exe = process.platform === 'win32' ? 'relaxd.exe' : 'relaxd';
   const binPath = join(process.resourcesPath, 'bin', exe);
   const port = await pickFreePort();
-  BACKEND_URL = `http://127.0.0.1:${port}`;
+  BACKEND_URL = `http://localhost:${port}`;
   process.env['BACKEND_URL'] = BACKEND_URL;
   backendProc = spawn(binPath, [], {
     cwd: dirname(binPath), // so godotenv.Load() finds the .env we bundled next to the binary

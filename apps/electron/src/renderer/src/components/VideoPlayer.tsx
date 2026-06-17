@@ -134,6 +134,14 @@ export function VideoPlayer(props: VideoPlayerProps) {
   // Transient HUD shown when the user scrolls to change volume.
   const [volumeHud, setVolumeHud] = useState<number | null>(null);
   const volumeHudTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
+  }, []);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
   const stats = useTorrentStats(infoHash);
   const initialBufferReady = stats?.bufferingComplete ?? false;
@@ -559,9 +567,11 @@ export function VideoPlayer(props: VideoPlayerProps) {
 
   const handleSelectTrack = useCallback(
     async (i: number) => {
+      setPanel('none');
       const track = tracks[i];
       if (!track) {
         setSelectedTrack(-1);
+        showToast('Subtitles off');
         return;
       }
       // Unsupported (e.g. PGS) — can't render. Click is a no-op.
@@ -572,6 +582,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
       if (track.url) {
         setSelectedTrack(i);
         setTrackState((prev) => { const m = new Map(prev); m.delete(i); return m; });
+        showToast(`Subtitles loaded: ${track.label}`);
         return;
       }
       // External provider (OpenSubtitles / YIFYSubs) — lazy download.
@@ -583,13 +594,14 @@ export function VideoPlayer(props: VideoPlayerProps) {
           prev.map((t, idx) => (idx === i ? { ...t, url: res.url } : t)),
         );
         setTrackState((prev) => { const m = new Map(prev); m.delete(i); return m; });
+        showToast(`Subtitles loaded: ${track.label}`);
       } catch (err) {
         const isQuota =
           err instanceof ConnectError && err.code === Code.ResourceExhausted;
         setTrackState((prev) => new Map(prev).set(i, isQuota ? 'quota' : 'error'));
       }
     },
-    [tracks],
+    [tracks, showToast],
   );
 
   // Auto-pick the first supported subtitle once tracks land. Runs exactly
@@ -707,6 +719,21 @@ export function VideoPlayer(props: VideoPlayerProps) {
       {(reBuffering || audioSwitching) && initialBufferReady && (
         <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/70 px-4 py-2 text-xs text-neutral-200 ring-1 ring-white/10">
           {audioSwitching ? 'Switching audio…' : 'Buffering…'}
+        </div>
+      )}
+
+      {toast && (
+        <div className="pointer-events-auto absolute right-4 top-4 z-40 flex items-center gap-2 rounded-lg bg-black/80 px-3 py-2 text-sm text-neutral-100 shadow-2xl ring-1 ring-white/10">
+          <Check className="h-4 w-4 text-accent" />
+          <span>{toast}</span>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            aria-label="Dismiss"
+            className="ml-1 cursor-pointer rounded p-0.5 text-neutral-400 transition hover:bg-white/10 hover:text-neutral-100"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
 

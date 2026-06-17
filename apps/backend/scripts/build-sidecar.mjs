@@ -36,9 +36,11 @@ mkdirSync(outRoot, { recursive: true });
 
 for (const { goos, goarch } of targets) {
   const exe = goos === 'windows' ? 'relaxd.exe' : 'relaxd';
-  const outDir = targets.length === 1 ? outRoot : join(outRoot, `${goos}-${goarch}`);
-  mkdirSync(outDir, { recursive: true });
-  const outPath = join(outDir, exe);
+  // ponytail: flat layout. Runtime reads resources/bin/<exe>; per-arch subdirs
+  // would never get picked up. electron-builder's beforePack drives one target
+  // per pack iteration, so the last entry wins if multiple are passed.
+  mkdirSync(outRoot, { recursive: true });
+  const outPath = join(outRoot, exe);
   console.log(`[build-sidecar] ${goos}/${goarch} -> ${outPath}`);
   const res = spawnSync('go', ['build', '-trimpath', '-ldflags=-s -w', '-o', outPath, './cmd/relaxd'], {
     cwd: backendDir,
@@ -52,7 +54,7 @@ for (const { goos, goarch } of targets) {
   // release, prompt for keys in-app or use ldflag-embedded values.
   const envSrc = resolve(backendDir, '.env');
   if (existsSync(envSrc)) {
-    copyFileSync(envSrc, join(outDir, '.env'));
+    copyFileSync(envSrc, join(outRoot, '.env'));
     console.log(`[build-sidecar] embedded .env`);
   } else {
     console.warn(`[build-sidecar] WARN: ${envSrc} not found — packaged app will start without TMDB_API_KEY`);
