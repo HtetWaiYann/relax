@@ -1,4 +1,4 @@
-import { Play, ArrowUp, ArrowDown, AlertCircle } from 'lucide-react';
+import { Play, ArrowUp, AlertCircle } from 'lucide-react';
 import type { StreamSource } from '@relax/types';
 
 const LOW_SEEDER_THRESHOLD = 5;
@@ -17,19 +17,23 @@ export function StreamSourceCard({ stream, onSelect }: StreamSourceCardProps) {
   const tracker = sourceParts.length > 1 ? sourceParts[sourceParts.length - 1] : '';
 
   return (
-    <article className="space-y-3 rounded-xl bg-surface-elevated/70 px-4 py-3 ring-1 ring-border-subtle/60 transition hover:bg-surface-elevated">
+    <article className="space-y-2 rounded-xl bg-surface-elevated/70 px-4 py-3 ring-1 ring-border-subtle/60 transition hover:bg-surface-elevated">
       <header className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-xs">
           <span className="rounded-md bg-accent px-2 py-0.5 font-semibold text-surface">
             {quality}
           </span>
-          {codec && <span className="font-medium text-neutral-300">{codec}</span>}
-          {tracker && <span className="text-neutral-400">{tracker}</span>}
+          {/* {codec && <span className="font-medium text-neutral-300">{codec}</span>}
+          {tracker && <span className="text-neutral-400">{tracker}</span>} */}
         </div>
         {sizeLabel && (
           <span className="text-xs font-medium text-neutral-300">{sizeLabel}</span>
         )}
       </header>
+
+      <p className="line-clamp-3 text-xs break-all text-neutral-500" title={stream.title}>
+        {stream.title}
+      </p>
 
       <div className="flex items-center justify-between gap-3">
         <div className="flex flex-1 items-center gap-3 text-xs text-neutral-400">
@@ -40,12 +44,6 @@ export function StreamSourceCard({ stream, onSelect }: StreamSourceCardProps) {
             </span>
           )}
           <SeedBar seeders={seeders ?? 0} />
-          {seeders === null ? null : (
-            <span className="flex items-center gap-1">
-              <ArrowDown className="h-3.5 w-3.5 text-neutral-500" />
-              <span className="text-neutral-300">{approxLeechers(seeders)}</span>
-            </span>
-          )}
           {seeders !== null && seeders < LOW_SEEDER_THRESHOLD && (
             <span
               title="Low seeders — may be slow"
@@ -59,7 +57,7 @@ export function StreamSourceCard({ stream, onSelect }: StreamSourceCardProps) {
         <button
           type="button"
           onClick={() => onSelect(stream)}
-          className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-accent/50"
+          className="flex cursor-pointer items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-accent/50"
           title={stream.title}
         >
           <Play className="h-3.5 w-3.5 fill-white" />
@@ -86,12 +84,6 @@ function pickCodec(title: string): string {
   if (lower.includes('x264') || lower.includes('h264')) return 'x264';
   if (lower.includes('av1')) return 'AV1';
   return '';
-}
-
-function approxLeechers(seeders: number): number {
-  // ponytail: Torrentio doesn't expose leechers; show a vague ratio so the card
-  // matches the design. Replace when a provider returns the real number.
-  return Math.max(1, Math.round(seeders * 0.15));
 }
 
 function formatBytes(n: number): string {

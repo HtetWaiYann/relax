@@ -71,7 +71,7 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 const HIDE_DELAY_MS = 3000;
 
 // Order in which sourceNames appear in the subtitle menu. Empty groups are omitted.
-const SUBTITLE_GROUP_ORDER = ['Embedded', 'Embedded (MKV)', 'OpenSubtitles', 'YIFYSubs'] as const;
+const SUBTITLE_GROUP_ORDER = ['Embedded', 'Embedded (MKV)', 'OpenSubtitles', 'Wyzie', 'YIFYSubs'] as const;
 
 // ponytail: English-only. Drop non-English tracks at ingest so they don't
 // show up in the menu, auto-select, or get downloaded. If multi-language
@@ -125,6 +125,8 @@ export function VideoPlayer(props: VideoPlayerProps) {
   const [tracks, setTracks] = useState<SubtitleTrack[]>([]);
   const [selectedTrack, setSelectedTrack] = useState<number>(-1);
   const [style, setStyle] = useState<SubtitleStyle>(loadSubtitleStyle);
+  // ponytail: per-session only — resets on track change. Persisting per-file would need a keyed store; not worth it until users ask.
+  const [subOffsetMs, setSubOffsetMs] = useState(0);
   const [reBuffering, setReBuffering] = useState(false);
   const [trackState, setTrackState] = useState<Map<number, TrackLoadState>>(new Map());
   const [videoError, setVideoError] = useState<string | null>(null);
@@ -163,7 +165,15 @@ export function VideoPlayer(props: VideoPlayerProps) {
     ? (tracks[selectedTrack]?.url || null)
     : null;
   const cues = useParsedVtt(activeTrackUrl);
-  const activeCue = useMemo(() => activeCueAt(cues, currentTime), [cues, currentTime]);
+  const activeCue = useMemo(
+    () => activeCueAt(cues, currentTime - subOffsetMs / 1000),
+    [cues, currentTime, subOffsetMs],
+  );
+
+  // Reset offset when the user picks a different track — calibration is per-track.
+  useEffect(() => {
+    setSubOffsetMs(0);
+  }, [selectedTrack]);
 
   // Load subtitles + audio tracks once the buffer is ready. Subtitle search:
   // local embedded (loose .srt/.vtt + MKV-extracted) first, then external
@@ -522,14 +532,23 @@ export function VideoPlayer(props: VideoPlayerProps) {
 
   // Mouse-wheel volume. Needs a non-passive listener — React's synthetic
   // onWheel is passive and can't preventDefault the page scroll.
+  // Accumulator-based throttle: trackpads emit many tiny deltaY events; sum
+  // them and only tick once per WHEEL_THRESHOLD of accumulated scroll.
+  const wheelAccumRef = useRef(0);
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    const WHEEL_THRESHOLD = 40;
+    const STEP = 0.02;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const v = videoRef.current;
       if (!v) return;
-      const next = Math.max(0, Math.min(1, v.volume + (e.deltaY > 0 ? -0.05 : 0.05)));
+      wheelAccumRef.current += e.deltaY;
+      const ticks = Math.trunc(wheelAccumRef.current / WHEEL_THRESHOLD);
+      if (ticks === 0) return;
+      wheelAccumRef.current -= ticks * WHEEL_THRESHOLD;
+      const next = Math.max(0, Math.min(1, v.volume - ticks * STEP));
       v.volume = next;
       v.muted = next === 0;
       setVolumeHud(next);
@@ -755,6 +774,8 @@ export function VideoPlayer(props: VideoPlayerProps) {
           onSelect={(i) => void handleSelectTrack(i)}
           style={style}
           onStyleChange={setStyle}
+          offsetMs={subOffsetMs}
+          onOffsetChange={setSubOffsetMs}
           onClose={() => setPanel('none')}
         />
       )}
@@ -1235,6 +1256,8 @@ function SubtitlesPanel({
   onSelect,
   style,
   onStyleChange,
+  offsetMs,
+  onOffsetChange,
   onClose,
 }: {
   tracks: SubtitleTrack[];
@@ -1243,6 +1266,8 @@ function SubtitlesPanel({
   onSelect: (i: number) => void;
   style: SubtitleStyle;
   onStyleChange: (s: SubtitleStyle) => void;
+  offsetMs: number;
+  onOffsetChange: (ms: number) => void;
   onClose: () => void;
 }) {
   const [view, setView] = useState<'tracks' | 'style'>('tracks');
@@ -1306,6 +1331,10 @@ function SubtitlesPanel({
             <p className="rounded-md bg-amber-900/30 px-3 py-2 text-xs text-amber-300 ring-1 ring-amber-800/50">
               Subtitle download limit reached — try again tomorrow.
             </p>
+          )}
+
+          {selected >= 0 && (
+            <SubtitleOffsetControl offsetMs={offsetMs} onChange={onOffsetChange} />
           )}
 
           <button type="button" onClick={() => setView('style')} className="cursor-pointer text-xs text-accent hover:text-accent-light">
@@ -1503,6 +1532,44 @@ function SpeedPanel({
             {s}×
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function SubtitleOffsetControl({
+  offsetMs,
+  onChange,
+}: {
+  offsetMs: number;
+  onChange: (ms: number) => void;
+}) {
+  const formatted = `${offsetMs >= 0 ? '+' : ''}${(offsetMs / 1000).toFixed(1)}s`;
+  // Positive = subtitles appear later than original; negative = earlier.
+  const STEP = 100;
+  const BIG_STEP = 500;
+  return (
+    <div className="rounded-md bg-white/5 px-3 py-2">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-xs font-medium text-neutral-300">Subtitle delay</span>
+        <span className="text-xs tabular-nums text-neutral-200">{formatted}</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <button type="button" onClick={() => onChange(offsetMs - BIG_STEP)}
+          className="cursor-pointer flex-1 rounded-md bg-white/5 px-2 py-1 text-xs text-neutral-200 hover:bg-white/10"
+          title="Earlier 0.5s">−0.5s</button>
+        <button type="button" onClick={() => onChange(offsetMs - STEP)}
+          className="cursor-pointer flex-1 rounded-md bg-white/5 px-2 py-1 text-xs text-neutral-200 hover:bg-white/10"
+          title="Earlier 0.1s">−0.1s</button>
+        <button type="button" onClick={() => onChange(0)}
+          className="cursor-pointer rounded-md bg-white/5 px-2 py-1 text-xs text-neutral-400 hover:bg-white/10"
+          disabled={offsetMs === 0} title="Reset">0</button>
+        <button type="button" onClick={() => onChange(offsetMs + STEP)}
+          className="cursor-pointer flex-1 rounded-md bg-white/5 px-2 py-1 text-xs text-neutral-200 hover:bg-white/10"
+          title="Later 0.1s">+0.1s</button>
+        <button type="button" onClick={() => onChange(offsetMs + BIG_STEP)}
+          className="cursor-pointer flex-1 rounded-md bg-white/5 px-2 py-1 text-xs text-neutral-200 hover:bg-white/10"
+          title="Later 0.5s">+0.5s</button>
       </div>
     </div>
   );

@@ -110,8 +110,8 @@ function FilterTabs({ value, onChange }: { value: Filter; onChange: (v: Filter) 
           onClick={() => onChange(t.key)}
           className={
             value === t.key
-              ? 'rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-white'
-              : 'rounded-md px-3 py-1.5 text-sm text-neutral-300 hover:text-neutral-100'
+              ? 'cursor-pointer rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-white'
+              : 'cursor-pointer rounded-md px-3 py-1.5 text-sm text-neutral-300 hover:text-neutral-100'
           }
         >
           {t.label}
@@ -153,7 +153,7 @@ function ViewToggle({ value, onChange }: { value: View; onChange: (v: View) => v
         type="button"
         aria-label="Grid view"
         onClick={() => onChange('grid')}
-        className={`rounded p-1.5 ${
+        className={`cursor-pointer rounded p-1.5 ${
           value === 'grid' ? 'bg-primary text-white' : 'text-neutral-400 hover:text-neutral-200'
         }`}
       >
@@ -163,7 +163,7 @@ function ViewToggle({ value, onChange }: { value: View; onChange: (v: View) => v
         type="button"
         aria-label="List view"
         onClick={() => onChange('list')}
-        className={`rounded p-1.5 ${
+        className={`cursor-pointer rounded p-1.5 ${
           value === 'list' ? 'bg-primary text-white' : 'text-neutral-400 hover:text-neutral-200'
         }`}
       >
@@ -226,7 +226,7 @@ function WatchlistGridCard({ item, onRemove }: { item: WatchlistItem; onRemove: 
           e.preventDefault();
           onRemove();
         }}
-        className="absolute left-2 top-2 hidden rounded-full bg-black/70 p-1.5 text-white transition hover:bg-red-900/80 group-hover:block"
+        className="absolute left-2 top-2 hidden cursor-pointer rounded-full bg-black/70 p-1.5 text-white transition hover:bg-red-900/80 group-hover:block"
       >
         <X className="h-3.5 w-3.5" />
       </button>

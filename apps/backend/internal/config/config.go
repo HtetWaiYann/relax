@@ -19,6 +19,7 @@ type Config struct {
 	AppEnv              string `env:"APP_ENV" envDefault:"development"`
 	TorrentioBaseURL    string `env:"TORRENTIO_BASE_URL" envDefault:"https://torrentio.strem.fun"`
 	OpenSubtitlesAPIKey string `env:"OPENSUBTITLES_API_KEY"`
+	WyzieAPIKey         string `env:"WYZIE_API_KEY"`
 	SubtitleCacheDir    string `env:"SUBTITLE_CACHE_DIR" envDefault:"./subtitle_cache"`
 }
 
