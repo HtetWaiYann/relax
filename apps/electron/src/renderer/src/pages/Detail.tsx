@@ -67,6 +67,8 @@ export function Detail() {
   const year = summary.releaseDate ? summary.releaseDate.slice(0, 4) : '';
   const runtime = detail.runtimeMinutes > 0 ? formatRuntime(detail.runtimeMinutes) : '';
   const rating = summary.voteAverage > 0 ? summary.voteAverage.toFixed(1) : null;
+  const isTV = params.mediaType === 'tv';
+  const watchable = canWatch(summary.releaseDate, detail.status, isTV);
 
   return (
     <div className="-mt-8 -mb-8 flex min-h-screen w-screen ml-[calc(50%-50vw)]">
@@ -121,14 +123,20 @@ export function Detail() {
 
                 <div className="flex flex-col items-end gap-1">
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setWatchOpen((v) => !v)}
-                      className="flex cursor-pointer items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-                    >
-                      <Play className="h-4 w-4 fill-white" />
-                      Watch
-                    </button>
+                    {watchable ? (
+                      <button
+                        type="button"
+                        onClick={() => setWatchOpen((v) => !v)}
+                        className="flex cursor-pointer items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                      >
+                        <Play className="h-4 w-4 fill-white" />
+                        Watch
+                      </button>
+                    ) : (
+                      <span className="rounded-md border border-border-subtle bg-surface-elevated/60 px-4 py-2.5 text-sm text-neutral-400">
+                        Not yet available
+                      </span>
+                    )}
                     <WatchlistButton
                       inWatchlist={watchlistStatus.data?.inWatchlist ?? false}
                       pending={addToWatchlist.isPending || removeFromWatchlist.isPending}
@@ -317,6 +325,22 @@ function MetaRow({
       )}
     </div>
   );
+}
+
+// ponytail: 45-day theatrical->digital window for movies. Tune if too
+// aggressive (some streaming-exclusives release same-day with torrents).
+const DIGITAL_RELEASE_DELAY_MS = 45 * 86_400_000;
+function canWatch(releaseDate: string, status: string, isTV: boolean): boolean {
+  if (isTV) {
+    if (!releaseDate) return true;
+    const aired = new Date(releaseDate).getTime();
+    return Number.isNaN(aired) || aired <= Date.now();
+  }
+  if (status && status !== 'Released') return false;
+  if (!releaseDate) return false;
+  const released = new Date(releaseDate).getTime();
+  if (Number.isNaN(released)) return true;
+  return Date.now() - released >= DIGITAL_RELEASE_DELAY_MS;
 }
 
 function formatRuntime(min: number): string {
