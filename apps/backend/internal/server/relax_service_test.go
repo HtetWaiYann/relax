@@ -23,7 +23,7 @@ func (nopStreams) GetStreams(_ context.Context, _ string, _ relaxv1.MediaType, _
 var _ streams.Provider = nopStreams{}
 
 func newTestServer() *RelaxServer {
-	store, err := storage.New(":memory:")
+	store, err := storage.New(":memory:", 0)
 	if err != nil {
 		panic(err)
 	}

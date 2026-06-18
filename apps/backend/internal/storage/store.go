@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -83,7 +84,9 @@ type sqliteStore struct {
 
 // New opens the SQLite DB at dsn and runs migrations. dsn is a plain path
 // like "./relax.db"; the driver name "sqlite" comes from modernc.org/sqlite.
-func New(dsn string) (Store, error) {
+// historyTTLDays > 0 enables a startup cleanup of watch_progress rows older
+// than the threshold; pass 0 to disable (useful for tests).
+func New(dsn string, historyTTLDays int) (Store, error) {
 	if dsn == "" {
 		return nil, errors.New("storage: empty dsn")
 	}
@@ -96,7 +99,32 @@ func New(dsn string) (Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	startupCleanup(db, historyTTLDays)
 	return &sqliteStore{db: db}, nil
+}
+
+// startupCleanup drops rows with malformed magnets and (if enabled) ages out
+// old watch_progress. Logged best-effort — startup never fails on a cleanup
+// error since the user can still read/write afterwards.
+func startupCleanup(db *sql.DB, historyTTLDays int) {
+	res, err := db.Exec(`
+		DELETE FROM watch_progress
+		WHERE magnet_uri = '' OR magnet_uri NOT LIKE 'magnet:?%'
+	`)
+	if err != nil {
+		slog.Warn("startup: cleanup invalid magnets failed", "err", err)
+	} else if n, _ := res.RowsAffected(); n > 0 {
+		slog.Info("startup: removed watch_progress rows with invalid magnet", "count", n)
+	}
+	if historyTTLDays > 0 {
+		cutoff := time.Now().AddDate(0, 0, -historyTTLDays).UnixMilli()
+		res, err := db.Exec(`DELETE FROM watch_progress WHERE last_watched_at < ?`, cutoff)
+		if err != nil {
+			slog.Warn("startup: history TTL cleanup failed", "err", err)
+		} else if n, _ := res.RowsAffected(); n > 0 {
+			slog.Info("startup: aged out watch_progress rows", "count", n, "ttl_days", historyTTLDays)
+		}
+	}
 }
 
 func migrate(db *sql.DB) error {

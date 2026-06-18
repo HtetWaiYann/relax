@@ -58,7 +58,7 @@ func run() error {
 		subtitleProviders = append(subtitleProviders, wyzie.New(cfg.WyzieAPIKey))
 	}
 
-	store, err := storage.New(cfg.DatabaseURL)
+	store, err := storage.New(cfg.DatabaseURL, cfg.HistoryTTLDays)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
@@ -70,6 +70,7 @@ func run() error {
 	if err := os.MkdirAll(cfg.SubtitleCacheDir, 0o755); err != nil {
 		logger.Warn("could not create subtitle cache dir", "err", err)
 	}
+	server.SweepSubtitleCache(cfg.SubtitleCacheDir, cfg.SubtitleCacheTTLDays)
 
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
