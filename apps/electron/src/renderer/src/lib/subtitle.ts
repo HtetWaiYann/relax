@@ -104,6 +104,16 @@ function stripTags(s: string): string {
   return s.replace(/<\/?[^>]+>/g, '');
 }
 
+// SRT → VTT: strip BOM, normalise line endings, replace ',' decimal in
+// timecodes with '.', and prefix with the WEBVTT magic header.
+export function srtToVtt(srt: string): string {
+  const cleaned = srt
+    .replace(/^﻿/, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+  return `WEBVTT\n\n${cleaned}`;
+}
+
 export function useParsedVtt(url: string | null): VttCue[] {
   const [cues, setCues] = useState<VttCue[]>([]);
   useEffect(() => {
@@ -111,12 +121,21 @@ export function useParsedVtt(url: string | null): VttCue[] {
     if (!url) return;
     let cancelled = false;
     fetch(url)
-      .then((r) => r.text())
-      .then((text) => {
-        if (!cancelled) setCues(parseVtt(text));
+      .then((r) => {
+        if (!r.ok) throw new Error(`fetch ${url} -> ${r.status}`);
+        return r.text();
       })
-      .catch(() => {
-        if (!cancelled) setCues([]);
+      .then((text) => {
+        if (cancelled) return;
+        const parsed = parseVtt(text);
+        console.log('[subtitle] parsed cues', { url, count: parsed.length, preview: text.slice(0, 120) });
+        setCues(parsed);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn('[subtitle] fetch/parse failed', url, err);
+          setCues([]);
+        }
       });
     return () => {
       cancelled = true;

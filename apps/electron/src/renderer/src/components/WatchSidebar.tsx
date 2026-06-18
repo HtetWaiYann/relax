@@ -52,7 +52,7 @@ export function WatchSidebar({ detail, onClose }: WatchSidebarProps) {
         <button
           type="button"
           onClick={onClose}
-          className="cursor-pointer rounded-full p-1.5 text-neutral-400 transition hover:bg-surface-muted hover:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-accent/40"
+          className="cursor-pointer rounded-full p-1.5 text-neutral-400 transition hover:bg-surface-muted hover:text-neutral-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           aria-label="Close watch panel"
         >
           <X className="h-4 w-4" />

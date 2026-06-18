@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import process from 'node:process';
 import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { registerTorrentIpc, startStreamServer, STREAM_BASE_URL } from './torrent';
+import { registerTorrentIpc, shutdownTorrentSubsystem, startStreamServer, STREAM_BASE_URL } from './torrent';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -122,7 +122,7 @@ function applyContentSecurityPolicy() {
     const directives = [
       "default-src 'self'",
       `script-src 'self'${isDev ? " 'unsafe-eval' 'unsafe-inline'" : ''}`,
-      `connect-src 'self' ${BACKEND_URL} ${STREAM_BASE_URL} ws://localhost:5173 http://localhost:5173`,
+      `connect-src 'self' ${BACKEND_URL} ${STREAM_BASE_URL} ws://localhost:5173 http://localhost:5173 blob:`,
       `media-src 'self' ${STREAM_BASE_URL} blob:`,
       "img-src 'self' data: https://image.tmdb.org",
       "style-src 'self' 'unsafe-inline'",
@@ -151,8 +151,20 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on('will-quit', () => {
-  if (backendProc && !backendProc.killed) backendProc.kill();
+// before-quit (not will-quit) so we can preventDefault and await async
+// teardown — webtorrent's destroy needs a tick to close peer sockets and the
+// HTTP stream server needs to drain in-flight requests.
+let cleanupDone = false;
+app.on('before-quit', (e) => {
+  if (cleanupDone) return;
+  e.preventDefault();
+  void (async () => {
+    try { await shutdownTorrentSubsystem(); }
+    catch (err) { console.warn('[electron] torrent shutdown failed', err); }
+    if (backendProc && !backendProc.killed) backendProc.kill();
+    cleanupDone = true;
+    app.quit();
+  })();
 });
 
 app.on('window-all-closed', () => {

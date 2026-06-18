@@ -281,7 +281,7 @@ function WatchlistList({ items }: { items: WatchlistItem[] }) {
               <button
                 type="button"
                 onClick={() => remove.mutate({ mediaId: it.mediaId, mediaType: it.mediaType })}
-                className="cursor-pointer rounded-md border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-neutral-200 transition hover:bg-red-900/30 hover:text-red-200"
+                className="cursor-pointer rounded-md border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-neutral-200 transition hover:border-red-900/50 hover:bg-red-900/30"
               >
                 Remove
               </button>

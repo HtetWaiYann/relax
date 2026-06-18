@@ -177,6 +177,7 @@ const finishedHashes = new Set<string>();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let client: any | null = null;
+let streamServer: ReturnType<typeof createServer> | null = null;
 const sessions = new Map<string, Session>();
 const subscribers = new Map<string, Set<WebContents>>();
 
@@ -545,7 +546,7 @@ function evictOldEntries() {
     if (e.lastAccessedAt > cutoff) continue;
     if (e.torrentName) {
       try { rmSync(join(downloadDir, e.torrentName), { recursive: true, force: true }); }
-      catch { /* noop */ }
+      catch (err) { console.warn('[torrent] evict rmSync failed', e.torrentName, err); }
     }
     delete idx[hash];
     changed = true;
@@ -559,9 +560,9 @@ function evictOldEntries() {
       try {
         const st = statSync(dir);
         if (st.mtimeMs <= cutoff) rmSync(dir, { recursive: true, force: true });
-      } catch { /* noop */ }
+      } catch (err) { console.warn('[torrent] evict orphan failed', name, err); }
     }
-  } catch { /* noop */ }
+  } catch (err) { console.warn('[torrent] evict orphan scan failed', err); }
   if (changed) writeCacheIndex(idx);
 }
 
@@ -946,6 +947,7 @@ async function handleMkvSubtitle(
 }
 
 export function startStreamServer() {
+  if (streamServer) return streamServer;
   const server = createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
@@ -974,7 +976,25 @@ export function startStreamServer() {
   server.listen(STREAM_PORT, '127.0.0.1', () => {
     console.log(`[torrent] stream server on http://localhost:${STREAM_PORT}`);
   });
+  streamServer = server;
   return server;
+}
+
+// Tear down torrent client + stream server. Called on app quit so peer
+// connections close cleanly instead of being yanked when the process dies.
+export async function shutdownTorrentSubsystem(): Promise<void> {
+  if (client) {
+    const c = client;
+    client = null;
+    await new Promise<void>((resolve) => {
+      try { c.destroy(() => resolve()); } catch { resolve(); }
+    });
+  }
+  if (streamServer) {
+    const s = streamServer;
+    streamServer = null;
+    await new Promise<void>((resolve) => s.close(() => resolve()));
+  }
 }
 
 export const STREAM_BASE_URL = `http://localhost:${STREAM_PORT}`;

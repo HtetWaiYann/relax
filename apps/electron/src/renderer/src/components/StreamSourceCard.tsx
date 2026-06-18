@@ -57,7 +57,7 @@ export function StreamSourceCard({ stream, onSelect }: StreamSourceCardProps) {
         <button
           type="button"
           onClick={() => onSelect(stream)}
-          className="flex cursor-pointer items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-accent/50"
+          className="flex cursor-pointer items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           title={stream.title}
         >
           <Play className="h-3.5 w-3.5 fill-white" />

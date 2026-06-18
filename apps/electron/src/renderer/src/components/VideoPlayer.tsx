@@ -33,6 +33,7 @@ import {
   DEFAULT_STYLE,
   loadSubtitleStyle,
   saveSubtitleStyle,
+  srtToVtt,
   useParsedVtt,
   type SubtitleStyle,
 } from '../lib/subtitle';
@@ -71,7 +72,7 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 const HIDE_DELAY_MS = 3000;
 
 // Order in which sourceNames appear in the subtitle menu. Empty groups are omitted.
-const SUBTITLE_GROUP_ORDER = ['Embedded', 'Embedded (MKV)', 'OpenSubtitles', 'Wyzie', 'YIFYSubs'] as const;
+const SUBTITLE_GROUP_ORDER = ['Local', 'Embedded', 'Embedded (MKV)', 'OpenSubtitles', 'Wyzie', 'YIFYSubs'] as const;
 
 // ponytail: English-only. Drop non-English tracks at ingest so they don't
 // show up in the menu, auto-select, or get downloaded. If multi-language
@@ -95,6 +96,12 @@ export function VideoPlayer(props: VideoPlayerProps) {
   // — the engine wants frequent updates; we only persist every 10s.
   const persistThrottle = useRef<number>(0);
   const resumeAppliedRef = useRef<boolean>(false);
+  // ponytail: decode errors are usually a corrupt piece in the current
+  // buffer — nudge the engine to re-fetch and reload <video> up to 3 times
+  // before surfacing the error. Reset per new stream URL.
+  const decodeRetryRef = useRef<number>(0);
+  const retrySeekRef = useRef<number | null>(null);
+  useEffect(() => { decodeRetryRef.current = 0; }, [initialStreamUrl]);
   // ponytail: most viewers skip credits — treat >=90% watched as finished and
   // stop persisting. Bump if false-positives on short content; lower if people
   // complain that long credits keep titles in Continue Watching.
@@ -143,7 +150,10 @@ export function VideoPlayer(props: VideoPlayerProps) {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 3500);
   }, []);
-  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    if (volumeHudTimer.current) clearTimeout(volumeHudTimer.current);
+  }, []);
 
   const stats = useTorrentStats(infoHash);
   const initialBufferReady = stats?.bufferingComplete ?? false;
@@ -180,12 +190,15 @@ export function VideoPlayer(props: VideoPlayerProps) {
   // providers (OpenSubtitles + YIFYSubs, aggregated by the backend).
   useEffect(() => {
     if (!initialBufferReady) return;
+    let cancelled = false;
     void getStreamSubtitles(infoHash, fileIdx).then((embedded) => {
+      if (cancelled) return;
       setTracks(embedded.filter((t) => isEnglish(t.language)));
       if (tmdbId > 0) {
         void relaxClient
           .searchSubtitles({ tmdbId, mediaType, season, episode })
           .then((res) => {
+            if (cancelled) return;
             const external: SubtitleTrack[] = (res.tracks ?? [])
               .filter((t) => isEnglish(t.language))
               .map((t) => ({
@@ -204,13 +217,15 @@ export function VideoPlayer(props: VideoPlayerProps) {
             // Non-critical: leave embedded-only tracks as-is.
           });
       }
-    }).catch(() => setTracks([]));
+    }).catch(() => { if (!cancelled) setTracks([]); });
 
     void getStreamAudioTracks(infoHash, fileIdx).then((at) => {
+      if (cancelled) return;
       setAudioTracks(at);
       const def = at.find((a) => a.isDefault) ?? at[0];
       if (def) setSelectedAudioId(def.id);
-    }).catch(() => setAudioTracks([]));
+    }).catch(() => { if (!cancelled) setAudioTracks([]); });
+    return () => { cancelled = true; };
   }, [infoHash, fileIdx, initialBufferReady, tmdbId, mediaType, season, episode]);
 
   // MKV-embedded subs are probe-gated and the backend no longer waits for
@@ -220,7 +235,9 @@ export function VideoPlayer(props: VideoPlayerProps) {
   const probeReady = (stats?.durationSeconds ?? 0) > 0;
   useEffect(() => {
     if (!initialBufferReady || !probeReady) return;
+    let cancelled = false;
     void getStreamSubtitles(infoHash, fileIdx).then((embedded) => {
+      if (cancelled) return;
       const mkv = embedded.filter(
         (t) => isEnglish(t.language) && t.sourceName === 'Embedded (MKV)',
       );
@@ -230,6 +247,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
         return [...prev, ...mkv.filter((t) => !seen.has(t.trackReference))];
       });
     }).catch(() => { /* noop */ });
+    return () => { cancelled = true; };
   }, [infoHash, fileIdx, initialBufferReady, probeReady]);
 
   // Persist subtitle style.
@@ -276,6 +294,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
   // we defer the play toggle long enough to swallow it when the second
   // click arrives.
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (clickTimerRef.current) clearTimeout(clickTimerRef.current); }, []);
   const handlePlayerClick = useCallback(() => {
     if (panel !== 'none' || showStats) {
       setPanel('none');
@@ -454,6 +473,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
     const onCanPlay = () => {
       setReBuffering(false);
       setAudioSwitching(false);
+      decodeRetryRef.current = 0;
     };
     const onVolume = () => {
       setVolume(v.volume);
@@ -462,10 +482,14 @@ export function VideoPlayer(props: VideoPlayerProps) {
     const onRate = () => setRate(v.playbackRate);
     const onMeta = () => {
       setDuration(v.duration || 0);
-      // Apply resume position once on the first playable load. Subsequent
-      // src swaps (audio change / remux seek) keep their explicit offsets
-      // via seekOffsetSeconds.
-      if (!resumeAppliedRef.current && resumeSeconds && resumeSeconds > 0) {
+      // Decode-retry path: restore the failed timestamp before play resumes.
+      if (retrySeekRef.current !== null) {
+        try { v.currentTime = retrySeekRef.current; } catch { /* noop */ }
+        retrySeekRef.current = null;
+      } else if (!resumeAppliedRef.current && resumeSeconds && resumeSeconds > 0) {
+        // Apply resume position once on the first playable load. Subsequent
+        // src swaps (audio change / remux seek) keep their explicit offsets
+        // via seekOffsetSeconds.
         resumeAppliedRef.current = true;
         if (needsRemux) {
           // Remux mode: seekTo will fire a new ?t= URL; until then leave the
@@ -480,7 +504,24 @@ export function VideoPlayer(props: VideoPlayerProps) {
     };
     const onError = () => {
       const code = v.error?.code;
-      console.warn('[video] error', { code, msg: v.error?.message, src: v.currentSrc });
+      console.warn('[video] error', { code, msg: v.error?.message, src: v.currentSrc, retry: decodeRetryRef.current });
+      // Decode errors: re-fetch bytes around the failure point and reload.
+      // Keep the buffering pill on so the user sees we're working on it.
+      if (code === MediaError.MEDIA_ERR_DECODE && decodeRetryRef.current < 3) {
+        decodeRetryRef.current++;
+        const resumeAt = v.currentTime + seekOffsetSeconds;
+        setReBuffering(true);
+        setStreamPosition(infoHash, fileIdx, resumeAt);
+        if (needsRemux) {
+          // seekTo fires a new ?t= URL → fresh ffmpeg pipe with re-fetched pieces.
+          seekTo(resumeAt);
+        } else {
+          // Passthrough: reload the media element and seek back via retrySeekRef.
+          retrySeekRef.current = resumeAt;
+          try { v.load(); } catch { /* noop */ }
+        }
+        return;
+      }
       if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
         setVideoError('This file format or codec isn\'t supported. Try a different source.');
       } else if (code === MediaError.MEDIA_ERR_NETWORK) {
@@ -530,6 +571,16 @@ export function VideoPlayer(props: VideoPlayerProps) {
     return () => document.removeEventListener('fullscreenchange', onFs);
   }, []);
 
+  // Release the video element on unmount: drop the HTTP connection to the
+  // local stream server, otherwise the open socket lingers until the next GC.
+  useEffect(() => {
+    const v = videoRef.current;
+    return () => {
+      if (!v) return;
+      try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* noop */ }
+    };
+  }, []);
+
   // Mouse-wheel volume. Needs a non-passive listener — React's synthetic
   // onWheel is passive and can't preventDefault the page scroll.
   // Accumulator-based throttle: trackpads emit many tiny deltaY events; sum
@@ -541,6 +592,9 @@ export function VideoPlayer(props: VideoPlayerProps) {
     const WHEEL_THRESHOLD = 40;
     const STEP = 0.02;
     const onWheel = (e: WheelEvent) => {
+      // A popup (subs / audio / speed / stats) is open — let the panel's own
+      // overflow-y-auto handle the scroll instead of hijacking it for volume.
+      if (panel !== 'none' || showStats) return;
       e.preventDefault();
       const v = videoRef.current;
       if (!v) return;
@@ -558,7 +612,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [wake]);
+  }, [wake, panel, showStats]);
 
   const setPlaybackRate = useCallback((r: number) => {
     const v = videoRef.current;
@@ -622,6 +676,42 @@ export function VideoPlayer(props: VideoPlayerProps) {
     },
     [tracks, showToast],
   );
+
+  // Local file-load: convert SRT→VTT in-renderer, wrap in a blob URL, inject
+  // as a new track, and select it. Blob URLs are revoked on unmount.
+  const localBlobUrlsRef = useRef<string[]>([]);
+  useEffect(() => () => {
+    for (const url of localBlobUrlsRef.current) URL.revokeObjectURL(url);
+  }, []);
+  // ponytail: always-current tracks ref so the file-load callback doesn't
+  // need tracks in deps (would re-create on every track append).
+  const tracksRef = useRef(tracks);
+  useEffect(() => { tracksRef.current = tracks; }, [tracks]);
+  const handleLoadLocalSubtitle = useCallback(async (file: File) => {
+    try {
+      const text = await file.text();
+      const vtt = /\.vtt$/i.test(file.name) ? text : srtToVtt(text);
+      const url = URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }));
+      localBlobUrlsRef.current.push(url);
+      const newTrack: SubtitleTrack = {
+        language: 'en',
+        label: file.name,
+        url,
+        format: 'vtt',
+        sourceName: 'Local',
+        trackReference: `local:${url}`,
+        supported: true,
+      };
+      const newIndex = tracksRef.current.length;
+      console.log('[subtitle] local track', { file: file.name, url, newIndex, vttPreview: vtt.slice(0, 120) });
+      setTracks((prev) => [...prev, newTrack]);
+      setSelectedTrack(newIndex);
+      showToast(`Subtitles loaded: ${file.name}`);
+    } catch (err) {
+      console.warn('[subtitle] local file load failed', err);
+      showToast('Failed to load subtitle file');
+    }
+  }, [showToast]);
 
   // Auto-pick the first supported subtitle once tracks land. Runs exactly
   // once per session — if the user picks Off afterwards we don't re-enable
@@ -772,6 +862,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
           selected={selectedTrack}
           trackState={trackState}
           onSelect={(i) => void handleSelectTrack(i)}
+          onLoadLocal={(f) => void handleLoadLocalSubtitle(f)}
           style={style}
           onStyleChange={setStyle}
           offsetMs={subOffsetMs}
@@ -1115,13 +1206,26 @@ function ProgressBar({
     const rect = ref.current.getBoundingClientRect();
     return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * duration;
   };
+  // ponytail: AbortController so a fullscreen toggle / unmount mid-drag still
+  // cleans up the document-level mousemove/mouseup listeners.
+  const dragAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => dragAbortRef.current?.abort(), []);
   const handleMouseDown = (e: ReactMouseEvent<HTMLDivElement>) => {
+    dragAbortRef.current?.abort();
+    const ctl = new AbortController();
+    dragAbortRef.current = ctl;
     const t = getSeekTime(e.clientX);
     if (t !== null) onSeek(t);
-    const onMove = (ev: MouseEvent) => { const tt = getSeekTime(ev.clientX); if (tt !== null) onSeek(tt); };
-    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    document.addEventListener(
+      'mousemove',
+      (ev) => { const tt = getSeekTime(ev.clientX); if (tt !== null) onSeek(tt); },
+      { signal: ctl.signal },
+    );
+    document.addEventListener(
+      'mouseup',
+      () => { ctl.abort(); if (dragAbortRef.current === ctl) dragAbortRef.current = null; },
+      { signal: ctl.signal },
+    );
   };
   return (
     <div
@@ -1254,6 +1358,7 @@ function SubtitlesPanel({
   selected,
   trackState,
   onSelect,
+  onLoadLocal,
   style,
   onStyleChange,
   offsetMs,
@@ -1264,12 +1369,14 @@ function SubtitlesPanel({
   selected: number;
   trackState: Map<number, TrackLoadState>;
   onSelect: (i: number) => void;
+  onLoadLocal: (f: File) => void;
   style: SubtitleStyle;
   onStyleChange: (s: SubtitleStyle) => void;
   offsetMs: number;
   onOffsetChange: (ms: number) => void;
   onClose: () => void;
 }) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [view, setView] = useState<'tracks' | 'style'>('tracks');
   const quotaHit = [...trackState.values()].some((s) => s === 'quota');
 
@@ -1337,9 +1444,27 @@ function SubtitlesPanel({
             <SubtitleOffsetControl offsetMs={offsetMs} onChange={onOffsetChange} />
           )}
 
-          <button type="button" onClick={() => setView('style')} className="cursor-pointer text-xs text-accent hover:text-accent-light">
-            Customize subtitle style →
-          </button>
+          <div className="flex items-center justify-between gap-2">
+            <button type="button" onClick={() => fileInputRef.current?.click()}
+              className="cursor-pointer text-xs text-neutral-400 hover:text-neutral-200">
+              Load from device…
+            </button>
+            <button type="button" onClick={() => setView('style')}
+              className="cursor-pointer text-xs text-accent hover:text-accent-light">
+              Customize style →
+            </button>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".srt,.vtt,text/vtt,application/x-subrip"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onLoadLocal(f);
+              e.target.value = ''; // allow reselecting the same file
+            }}
+          />
         </div>
       ) : (
         <div className="space-y-4">
