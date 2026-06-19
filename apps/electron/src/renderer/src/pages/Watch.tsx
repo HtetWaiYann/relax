@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Layers } from 'lucide-react';
 import { MediaType } from '@relax/types';
 import { VideoPlayer } from '../components/VideoPlayer';
+import { WatchSidebar } from '../components/WatchSidebar';
 import { startStream, stopStream, type StartStreamResult } from '../lib/torrent';
+import { useMediaDetail } from '../lib/queries';
 
 export interface WatchState {
   infoHash: string;
@@ -27,6 +30,15 @@ export function Watch() {
   const state = location.state as WatchState | null;
   const [stream, setStream] = useState<StartStreamResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const isTV = state?.mediaType === MediaType.TV;
+  const detailQuery = useMediaDetail(
+    state?.mediaType ?? MediaType.UNSPECIFIED,
+    isTV ? (state?.tmdbId ?? 0) : 0,
+  );
+  const detail = detailQuery.data?.detail;
+
+  useEffect(() => { setPickerOpen(false); }, [params.infoHash]);
 
   useEffect(() => {
     if (!state || state.infoHash !== params.infoHash) return;
@@ -64,7 +76,7 @@ export function Watch() {
           <button
             type="button"
             onClick={() => navigate(-1)}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90"
+            className="cursor-pointer rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90"
           >
             Back
           </button>
@@ -74,22 +86,53 @@ export function Watch() {
   }
 
   return (
-    <VideoPlayer
-      infoHash={state.infoHash}
-      fileIdx={state.fileIdx}
-      streamUrl={stream?.streamUrl}
-      title={state.title}
-      subtitle={state.subtitle}
-      quality={state.quality}
-      sourceLabel={state.sourceLabel}
-      tmdbId={state.tmdbId}
-      mediaType={state.mediaType}
-      season={state.season}
-      episode={state.episode}
-      resumeSeconds={state.resumeSeconds}
-      magnetUri={state.magnetUri}
-      posterUrl={state.posterUrl}
-      onBack={() => navigate(-1)}
-    />
+    <>
+      <VideoPlayer
+        infoHash={state.infoHash}
+        fileIdx={state.fileIdx}
+        streamUrl={stream?.streamUrl}
+        title={state.title}
+        subtitle={state.subtitle}
+        quality={state.quality}
+        sourceLabel={state.sourceLabel}
+        tmdbId={state.tmdbId}
+        mediaType={state.mediaType}
+        season={state.season}
+        episode={state.episode}
+        resumeSeconds={state.resumeSeconds}
+        magnetUri={state.magnetUri}
+        posterUrl={state.posterUrl}
+        onBack={() => navigate(-1)}
+      />
+
+      {isTV && (
+        <button
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          className="fixed right-4 top-4 z-[60] flex cursor-pointer items-center gap-1.5 rounded-md bg-black/60 px-3 py-1.5 text-xs font-medium text-white backdrop-blur transition hover:bg-black/80"
+        >
+          <Layers className="h-3.5 w-3.5" />
+          S{state.season} · E{state.episode}
+        </button>
+      )}
+
+      {pickerOpen && (
+        <div className="fixed inset-0 z-[70]">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setPickerOpen(false)}
+          />
+          <div className="absolute right-0 top-0 h-full w-[400px] bg-surface-elevated shadow-2xl">
+            {detail ? (
+              <WatchSidebar detail={detail} onClose={() => setPickerOpen(false)} />
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-neutral-400">
+                {detailQuery.isLoading ? 'Loading…' : "Couldn't load details."}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
   );
 }

@@ -245,6 +245,135 @@ func (s *RelaxServer) ClearWatchHistory(
 	return connect.NewResponse(&relaxv1.ClearWatchHistoryResponse{}), nil
 }
 
+func (s *RelaxServer) AddToWatchlist(
+	ctx context.Context,
+	req *connect.Request[relaxv1.AddToWatchlistRequest],
+) (*connect.Response[relaxv1.AddToWatchlistResponse], error) {
+	it := req.Msg.GetItem()
+	if it == nil {
+		return nil, invalidArg("item is required")
+	}
+	if err := requireNonEmpty("media_id", it.GetMediaId()); err != nil {
+		return nil, err
+	}
+	added := time.Now().UTC()
+	if ts := it.GetAddedAt(); ts != nil {
+		added = ts.AsTime()
+	}
+	if err := s.store.WatchlistAdd(ctx, storage.WatchlistItem{
+		MediaID:     it.GetMediaId(),
+		MediaType:   int32(it.GetMediaType()),
+		Title:       it.GetTitle(),
+		PosterURL:   it.GetPosterUrl(),
+		BackdropURL: it.GetBackdropUrl(),
+		Overview:    it.GetOverview(),
+		VoteAverage: it.GetVoteAverage(),
+		ReleaseYear: it.GetReleaseYear(),
+		Genres:      it.GetGenres(),
+		AddedAt:     added,
+	}); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&relaxv1.AddToWatchlistResponse{}), nil
+}
+
+func (s *RelaxServer) RemoveFromWatchlist(
+	ctx context.Context,
+	req *connect.Request[relaxv1.RemoveFromWatchlistRequest],
+) (*connect.Response[relaxv1.RemoveFromWatchlistResponse], error) {
+	if err := requireNonEmpty("media_id", req.Msg.GetMediaId()); err != nil {
+		return nil, err
+	}
+	if err := s.store.WatchlistRemove(ctx, req.Msg.GetMediaId(), int32(req.Msg.GetMediaType())); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&relaxv1.RemoveFromWatchlistResponse{}), nil
+}
+
+func (s *RelaxServer) GetWatchlist(
+	ctx context.Context,
+	req *connect.Request[relaxv1.GetWatchlistRequest],
+) (*connect.Response[relaxv1.GetWatchlistResponse], error) {
+	q := storage.WatchlistQuery{
+		SortBy: watchlistSortKey(req.Msg.GetSortBy()),
+		Order:  sortOrderKey(req.Msg.GetOrder()),
+		Limit:  int(req.Msg.GetLimit()),
+		Offset: int(req.Msg.GetOffset()),
+	}
+	switch req.Msg.GetMediaTypeFilter() {
+	case relaxv1.WatchlistFilter_WATCHLIST_FILTER_MOVIE:
+		q.MediaType = int32(relaxv1.MediaType_MEDIA_TYPE_MOVIE)
+	case relaxv1.WatchlistFilter_WATCHLIST_FILTER_TV:
+		q.MediaType = int32(relaxv1.MediaType_MEDIA_TYPE_TV)
+	}
+	rows, total, err := s.store.WatchlistList(ctx, q)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	items := make([]*relaxv1.WatchlistItem, len(rows))
+	for i, r := range rows {
+		items[i] = watchlistToProto(r)
+	}
+	return connect.NewResponse(&relaxv1.GetWatchlistResponse{Items: items, TotalCount: int32(total)}), nil
+}
+
+func (s *RelaxServer) IsInWatchlist(
+	ctx context.Context,
+	req *connect.Request[relaxv1.IsInWatchlistRequest],
+) (*connect.Response[relaxv1.IsInWatchlistResponse], error) {
+	if err := requireNonEmpty("media_id", req.Msg.GetMediaId()); err != nil {
+		return nil, err
+	}
+	in, err := s.store.WatchlistHas(ctx, req.Msg.GetMediaId(), int32(req.Msg.GetMediaType()))
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&relaxv1.IsInWatchlistResponse{InWatchlist: in}), nil
+}
+
+func (s *RelaxServer) ClearWatchlist(
+	ctx context.Context,
+	_ *connect.Request[relaxv1.ClearWatchlistRequest],
+) (*connect.Response[relaxv1.ClearWatchlistResponse], error) {
+	if err := s.store.WatchlistClear(ctx); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&relaxv1.ClearWatchlistResponse{}), nil
+}
+
+func watchlistSortKey(v relaxv1.WatchlistSort) string {
+	switch v {
+	case relaxv1.WatchlistSort_WATCHLIST_SORT_TITLE:
+		return "title"
+	case relaxv1.WatchlistSort_WATCHLIST_SORT_RATING:
+		return "rating"
+	default:
+		return "added_at"
+	}
+}
+
+func sortOrderKey(v relaxv1.SortOrder) string {
+	if v == relaxv1.SortOrder_SORT_ORDER_ASC {
+		return "asc"
+	}
+	return "desc"
+}
+
+func watchlistToProto(it storage.WatchlistItem) *relaxv1.WatchlistItem {
+	return &relaxv1.WatchlistItem{
+		MediaId:     it.MediaID,
+		MediaType:   relaxv1.MediaType(it.MediaType),
+		Title:       it.Title,
+		PosterUrl:   it.PosterURL,
+		BackdropUrl: it.BackdropURL,
+		Overview:    it.Overview,
+		VoteAverage: it.VoteAverage,
+		ReleaseYear: it.ReleaseYear,
+		Genres:      it.Genres,
+		AddedAt:     timestamppb.New(it.AddedAt),
+	}
+}
+
 func toProto(p storage.WatchProgress) *relaxv1.WatchProgress {
 	return &relaxv1.WatchProgress{
 		MediaId:         p.MediaID,

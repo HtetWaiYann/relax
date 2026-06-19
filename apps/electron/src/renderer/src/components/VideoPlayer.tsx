@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  ArrowDown,
   ArrowUp,
   Check,
   ChevronLeft,
@@ -23,6 +24,7 @@ import {
   Subtitles,
   Volume2,
   VolumeX,
+  X,
 } from 'lucide-react';
 import { ConnectError, Code } from '@connectrpc/connect';
 import { type MediaType } from '@relax/types';
@@ -31,6 +33,7 @@ import {
   DEFAULT_STYLE,
   loadSubtitleStyle,
   saveSubtitleStyle,
+  srtToVtt,
   useParsedVtt,
   type SubtitleStyle,
 } from '../lib/subtitle';
@@ -69,7 +72,7 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 const HIDE_DELAY_MS = 3000;
 
 // Order in which sourceNames appear in the subtitle menu. Empty groups are omitted.
-const SUBTITLE_GROUP_ORDER = ['Embedded', 'Embedded (MKV)', 'OpenSubtitles', 'YIFYSubs'] as const;
+const SUBTITLE_GROUP_ORDER = ['Local', 'Embedded', 'Embedded (MKV)', 'OpenSubtitles', 'Wyzie', 'YIFYSubs'] as const;
 
 // ponytail: English-only. Drop non-English tracks at ingest so they don't
 // show up in the menu, auto-select, or get downloaded. If multi-language
@@ -93,6 +96,12 @@ export function VideoPlayer(props: VideoPlayerProps) {
   // — the engine wants frequent updates; we only persist every 10s.
   const persistThrottle = useRef<number>(0);
   const resumeAppliedRef = useRef<boolean>(false);
+  // ponytail: decode errors are usually a corrupt piece in the current
+  // buffer — nudge the engine to re-fetch and reload <video> up to 3 times
+  // before surfacing the error. Reset per new stream URL.
+  const decodeRetryRef = useRef<number>(0);
+  const retrySeekRef = useRef<number | null>(null);
+  useEffect(() => { decodeRetryRef.current = 0; }, [initialStreamUrl]);
   // ponytail: most viewers skip credits — treat >=90% watched as finished and
   // stop persisting. Bump if false-positives on short content; lower if people
   // complain that long credits keep titles in Continue Watching.
@@ -123,6 +132,8 @@ export function VideoPlayer(props: VideoPlayerProps) {
   const [tracks, setTracks] = useState<SubtitleTrack[]>([]);
   const [selectedTrack, setSelectedTrack] = useState<number>(-1);
   const [style, setStyle] = useState<SubtitleStyle>(loadSubtitleStyle);
+  // ponytail: per-session only — resets on track change. Persisting per-file would need a keyed store; not worth it until users ask.
+  const [subOffsetMs, setSubOffsetMs] = useState(0);
   const [reBuffering, setReBuffering] = useState(false);
   const [trackState, setTrackState] = useState<Map<number, TrackLoadState>>(new Map());
   const [videoError, setVideoError] = useState<string | null>(null);
@@ -132,6 +143,17 @@ export function VideoPlayer(props: VideoPlayerProps) {
   // Transient HUD shown when the user scrolls to change volume.
   const [volumeHud, setVolumeHud] = useState<number | null>(null);
   const volumeHudTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
+  }, []);
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    if (volumeHudTimer.current) clearTimeout(volumeHudTimer.current);
+  }, []);
 
   const stats = useTorrentStats(infoHash);
   const initialBufferReady = stats?.bufferingComplete ?? false;
@@ -153,19 +175,30 @@ export function VideoPlayer(props: VideoPlayerProps) {
     ? (tracks[selectedTrack]?.url || null)
     : null;
   const cues = useParsedVtt(activeTrackUrl);
-  const activeCue = useMemo(() => activeCueAt(cues, currentTime), [cues, currentTime]);
+  const activeCue = useMemo(
+    () => activeCueAt(cues, currentTime - subOffsetMs / 1000),
+    [cues, currentTime, subOffsetMs],
+  );
+
+  // Reset offset when the user picks a different track — calibration is per-track.
+  useEffect(() => {
+    setSubOffsetMs(0);
+  }, [selectedTrack]);
 
   // Load subtitles + audio tracks once the buffer is ready. Subtitle search:
   // local embedded (loose .srt/.vtt + MKV-extracted) first, then external
   // providers (OpenSubtitles + YIFYSubs, aggregated by the backend).
   useEffect(() => {
     if (!initialBufferReady) return;
+    let cancelled = false;
     void getStreamSubtitles(infoHash, fileIdx).then((embedded) => {
+      if (cancelled) return;
       setTracks(embedded.filter((t) => isEnglish(t.language)));
       if (tmdbId > 0) {
         void relaxClient
           .searchSubtitles({ tmdbId, mediaType, season, episode })
           .then((res) => {
+            if (cancelled) return;
             const external: SubtitleTrack[] = (res.tracks ?? [])
               .filter((t) => isEnglish(t.language))
               .map((t) => ({
@@ -184,13 +217,15 @@ export function VideoPlayer(props: VideoPlayerProps) {
             // Non-critical: leave embedded-only tracks as-is.
           });
       }
-    }).catch(() => setTracks([]));
+    }).catch(() => { if (!cancelled) setTracks([]); });
 
     void getStreamAudioTracks(infoHash, fileIdx).then((at) => {
+      if (cancelled) return;
       setAudioTracks(at);
       const def = at.find((a) => a.isDefault) ?? at[0];
       if (def) setSelectedAudioId(def.id);
-    }).catch(() => setAudioTracks([]));
+    }).catch(() => { if (!cancelled) setAudioTracks([]); });
+    return () => { cancelled = true; };
   }, [infoHash, fileIdx, initialBufferReady, tmdbId, mediaType, season, episode]);
 
   // MKV-embedded subs are probe-gated and the backend no longer waits for
@@ -200,7 +235,9 @@ export function VideoPlayer(props: VideoPlayerProps) {
   const probeReady = (stats?.durationSeconds ?? 0) > 0;
   useEffect(() => {
     if (!initialBufferReady || !probeReady) return;
+    let cancelled = false;
     void getStreamSubtitles(infoHash, fileIdx).then((embedded) => {
+      if (cancelled) return;
       const mkv = embedded.filter(
         (t) => isEnglish(t.language) && t.sourceName === 'Embedded (MKV)',
       );
@@ -210,6 +247,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
         return [...prev, ...mkv.filter((t) => !seen.has(t.trackReference))];
       });
     }).catch(() => { /* noop */ });
+    return () => { cancelled = true; };
   }, [infoHash, fileIdx, initialBufferReady, probeReady]);
 
   // Persist subtitle style.
@@ -256,6 +294,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
   // we defer the play toggle long enough to swallow it when the second
   // click arrives.
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (clickTimerRef.current) clearTimeout(clickTimerRef.current); }, []);
   const handlePlayerClick = useCallback(() => {
     if (panel !== 'none' || showStats) {
       setPanel('none');
@@ -289,6 +328,10 @@ export function VideoPlayer(props: VideoPlayerProps) {
         setSeekOffsetSeconds(clamped);
         setCurrentTime(0);
         setBufferedEnd(0);
+        // <video>'s `waiting` event doesn't fire on src swap (it goes
+        // emptied→loadstart→canplay), so force the buffering pill on until
+        // canplay clears it.
+        setReBuffering(true);
         void seekStreamUrl(infoHash, fileIdx, clamped).then((url) => {
           if (url) setStreamUrl(url);
         });
@@ -430,6 +473,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
     const onCanPlay = () => {
       setReBuffering(false);
       setAudioSwitching(false);
+      decodeRetryRef.current = 0;
     };
     const onVolume = () => {
       setVolume(v.volume);
@@ -438,10 +482,14 @@ export function VideoPlayer(props: VideoPlayerProps) {
     const onRate = () => setRate(v.playbackRate);
     const onMeta = () => {
       setDuration(v.duration || 0);
-      // Apply resume position once on the first playable load. Subsequent
-      // src swaps (audio change / remux seek) keep their explicit offsets
-      // via seekOffsetSeconds.
-      if (!resumeAppliedRef.current && resumeSeconds && resumeSeconds > 0) {
+      // Decode-retry path: restore the failed timestamp before play resumes.
+      if (retrySeekRef.current !== null) {
+        try { v.currentTime = retrySeekRef.current; } catch { /* noop */ }
+        retrySeekRef.current = null;
+      } else if (!resumeAppliedRef.current && resumeSeconds && resumeSeconds > 0) {
+        // Apply resume position once on the first playable load. Subsequent
+        // src swaps (audio change / remux seek) keep their explicit offsets
+        // via seekOffsetSeconds.
         resumeAppliedRef.current = true;
         if (needsRemux) {
           // Remux mode: seekTo will fire a new ?t= URL; until then leave the
@@ -456,6 +504,24 @@ export function VideoPlayer(props: VideoPlayerProps) {
     };
     const onError = () => {
       const code = v.error?.code;
+      console.warn('[video] error', { code, msg: v.error?.message, src: v.currentSrc, retry: decodeRetryRef.current });
+      // Decode errors: re-fetch bytes around the failure point and reload.
+      // Keep the buffering pill on so the user sees we're working on it.
+      if (code === MediaError.MEDIA_ERR_DECODE && decodeRetryRef.current < 3) {
+        decodeRetryRef.current++;
+        const resumeAt = v.currentTime + seekOffsetSeconds;
+        setReBuffering(true);
+        setStreamPosition(infoHash, fileIdx, resumeAt);
+        if (needsRemux) {
+          // seekTo fires a new ?t= URL → fresh ffmpeg pipe with re-fetched pieces.
+          seekTo(resumeAt);
+        } else {
+          // Passthrough: reload the media element and seek back via retrySeekRef.
+          retrySeekRef.current = resumeAt;
+          try { v.load(); } catch { /* noop */ }
+        }
+        return;
+      }
       if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
         setVideoError('This file format or codec isn\'t supported. Try a different source.');
       } else if (code === MediaError.MEDIA_ERR_NETWORK) {
@@ -505,16 +571,38 @@ export function VideoPlayer(props: VideoPlayerProps) {
     return () => document.removeEventListener('fullscreenchange', onFs);
   }, []);
 
+  // Release the video element on unmount: drop the HTTP connection to the
+  // local stream server, otherwise the open socket lingers until the next GC.
+  useEffect(() => {
+    const v = videoRef.current;
+    return () => {
+      if (!v) return;
+      try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* noop */ }
+    };
+  }, []);
+
   // Mouse-wheel volume. Needs a non-passive listener — React's synthetic
   // onWheel is passive and can't preventDefault the page scroll.
+  // Accumulator-based throttle: trackpads emit many tiny deltaY events; sum
+  // them and only tick once per WHEEL_THRESHOLD of accumulated scroll.
+  const wheelAccumRef = useRef(0);
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    const WHEEL_THRESHOLD = 40;
+    const STEP = 0.02;
     const onWheel = (e: WheelEvent) => {
+      // A popup (subs / audio / speed / stats) is open — let the panel's own
+      // overflow-y-auto handle the scroll instead of hijacking it for volume.
+      if (panel !== 'none' || showStats) return;
       e.preventDefault();
       const v = videoRef.current;
       if (!v) return;
-      const next = Math.max(0, Math.min(1, v.volume + (e.deltaY > 0 ? -0.05 : 0.05)));
+      wheelAccumRef.current += e.deltaY;
+      const ticks = Math.trunc(wheelAccumRef.current / WHEEL_THRESHOLD);
+      if (ticks === 0) return;
+      wheelAccumRef.current -= ticks * WHEEL_THRESHOLD;
+      const next = Math.max(0, Math.min(1, v.volume - ticks * STEP));
       v.volume = next;
       v.muted = next === 0;
       setVolumeHud(next);
@@ -524,7 +612,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [wake]);
+  }, [wake, panel, showStats]);
 
   const setPlaybackRate = useCallback((r: number) => {
     const v = videoRef.current;
@@ -552,9 +640,11 @@ export function VideoPlayer(props: VideoPlayerProps) {
 
   const handleSelectTrack = useCallback(
     async (i: number) => {
+      setPanel('none');
       const track = tracks[i];
       if (!track) {
         setSelectedTrack(-1);
+        showToast('Subtitles off');
         return;
       }
       // Unsupported (e.g. PGS) — can't render. Click is a no-op.
@@ -565,6 +655,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
       if (track.url) {
         setSelectedTrack(i);
         setTrackState((prev) => { const m = new Map(prev); m.delete(i); return m; });
+        showToast(`Subtitles loaded: ${track.label}`);
         return;
       }
       // External provider (OpenSubtitles / YIFYSubs) — lazy download.
@@ -576,14 +667,51 @@ export function VideoPlayer(props: VideoPlayerProps) {
           prev.map((t, idx) => (idx === i ? { ...t, url: res.url } : t)),
         );
         setTrackState((prev) => { const m = new Map(prev); m.delete(i); return m; });
+        showToast(`Subtitles loaded: ${track.label}`);
       } catch (err) {
         const isQuota =
           err instanceof ConnectError && err.code === Code.ResourceExhausted;
         setTrackState((prev) => new Map(prev).set(i, isQuota ? 'quota' : 'error'));
       }
     },
-    [tracks],
+    [tracks, showToast],
   );
+
+  // Local file-load: convert SRT→VTT in-renderer, wrap in a blob URL, inject
+  // as a new track, and select it. Blob URLs are revoked on unmount.
+  const localBlobUrlsRef = useRef<string[]>([]);
+  useEffect(() => () => {
+    for (const url of localBlobUrlsRef.current) URL.revokeObjectURL(url);
+  }, []);
+  // ponytail: always-current tracks ref so the file-load callback doesn't
+  // need tracks in deps (would re-create on every track append).
+  const tracksRef = useRef(tracks);
+  useEffect(() => { tracksRef.current = tracks; }, [tracks]);
+  const handleLoadLocalSubtitle = useCallback(async (file: File) => {
+    try {
+      const text = await file.text();
+      const vtt = /\.vtt$/i.test(file.name) ? text : srtToVtt(text);
+      const url = URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }));
+      localBlobUrlsRef.current.push(url);
+      const newTrack: SubtitleTrack = {
+        language: 'en',
+        label: file.name,
+        url,
+        format: 'vtt',
+        sourceName: 'Local',
+        trackReference: `local:${url}`,
+        supported: true,
+      };
+      const newIndex = tracksRef.current.length;
+      console.log('[subtitle] local track', { file: file.name, url, newIndex, vttPreview: vtt.slice(0, 120) });
+      setTracks((prev) => [...prev, newTrack]);
+      setSelectedTrack(newIndex);
+      showToast(`Subtitles loaded: ${file.name}`);
+    } catch (err) {
+      console.warn('[subtitle] local file load failed', err);
+      showToast('Failed to load subtitle file');
+    }
+  }, [showToast]);
 
   // Auto-pick the first supported subtitle once tracks land. Runs exactly
   // once per session — if the user picks Off afterwards we don't re-enable
@@ -627,7 +755,16 @@ export function VideoPlayer(props: VideoPlayerProps) {
       )}
 
       {(!initialBufferReady || !streamUrl) && (
-        <BufferingOverlay percent={initialBufferPct} />
+        <BufferingOverlay
+          percent={initialBufferPct}
+          title={title}
+          subtitle={subtitle}
+          quality={quality}
+          sourceLabel={sourceLabel}
+          posterUrl={posterUrl}
+          stats={stats}
+          onBack={onBack}
+        />
       )}
 
       {videoError && (
@@ -694,6 +831,21 @@ export function VideoPlayer(props: VideoPlayerProps) {
         </div>
       )}
 
+      {toast && (
+        <div className="pointer-events-auto absolute right-4 top-4 z-40 flex items-center gap-2 rounded-lg bg-black/80 px-3 py-2 text-sm text-neutral-100 shadow-2xl ring-1 ring-white/10">
+          <Check className="h-4 w-4 text-accent" />
+          <span>{toast}</span>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            aria-label="Dismiss"
+            className="ml-1 cursor-pointer rounded p-0.5 text-neutral-400 transition hover:bg-white/10 hover:text-neutral-100"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
       {volumeHud !== null && (
         <div className="pointer-events-none absolute left-1/2 top-1/2 z-30 flex -translate-x-1/2 -translate-y-1/2 items-center gap-3 rounded-full bg-black/75 px-5 py-3 text-sm text-neutral-100 ring-1 ring-white/10">
           {volumeHud === 0 ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
@@ -710,8 +862,11 @@ export function VideoPlayer(props: VideoPlayerProps) {
           selected={selectedTrack}
           trackState={trackState}
           onSelect={(i) => void handleSelectTrack(i)}
+          onLoadLocal={(f) => void handleLoadLocalSubtitle(f)}
           style={style}
           onStyleChange={setStyle}
+          offsetMs={subOffsetMs}
+          onOffsetChange={setSubOffsetMs}
           onClose={() => setPanel('none')}
         />
       )}
@@ -837,27 +992,198 @@ export function VideoPlayer(props: VideoPlayerProps) {
   );
 }
 
-function BufferingOverlay({ percent }: { percent: number }) {
+function BufferingOverlay({
+  percent,
+  title,
+  subtitle,
+  quality,
+  sourceLabel,
+  posterUrl,
+  stats,
+  onBack,
+}: {
+  percent: number;
+  title: string;
+  subtitle?: string;
+  quality?: string;
+  sourceLabel?: string;
+  posterUrl?: string;
+  stats: ReturnType<typeof useTorrentStats>;
+  onBack: () => void;
+}) {
+  const numPeers = stats?.numPeers ?? 0;
+  const downloadSpeedBps = stats?.downloadSpeedBps ?? 0;
+  const durationSec = stats?.durationSeconds ?? 0;
+
+  // ponytail: ETA from observed buffer velocity since first non-zero sample.
+  // Linear projection — good enough for a transient UI hint. Swap for a
+  // smoothed estimate if it visibly jitters.
+  const anchorRef = useRef<{ t: number; pct: number } | null>(null);
+  const [etaSec, setEtaSec] = useState<number | null>(null);
+  useEffect(() => {
+    if (percent <= 0 || percent >= 100) return;
+    if (!anchorRef.current) {
+      anchorRef.current = { t: Date.now(), pct: percent };
+      return;
+    }
+    const { t, pct } = anchorRef.current;
+    const elapsed = (Date.now() - t) / 1000;
+    const gained = percent - pct;
+    if (gained > 0 && elapsed > 1) {
+      setEtaSec(Math.max(0, Math.round(((100 - percent) * elapsed) / gained)));
+    }
+  }, [percent]);
+
+  const meta = [
+    subtitle,
+    durationSec > 0 ? fmtDuration(durationSec) : null,
+    quality,
+    sourceLabel,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const R = 42;
+  const C = 2 * Math.PI * R;
+  const clamped = Math.max(0, Math.min(100, percent));
+  const dashOffset = C * (1 - clamped / 100);
+
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black">
-      <div className="flex flex-col items-center gap-4 text-center text-neutral-200">
-        <div className="relative h-16 w-16">
-          <div className="absolute inset-0 rounded-full border-2 border-white/10" />
-          <div className="absolute inset-0 animate-spin rounded-full border-2 border-transparent border-t-accent" />
-        </div>
+    <div className="absolute inset-0 z-20 flex items-center justify-center overflow-hidden bg-black">
+      {posterUrl && (
+        <div
+          aria-hidden
+          className="absolute inset-0 scale-110 opacity-25 blur-3xl"
+          style={{
+            backgroundImage: `url(${posterUrl})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+          }}
+        />
+      )}
+
+      <div className="relative z-10 flex w-full max-w-md flex-col items-center gap-5 px-6 text-center">
+        {posterUrl && (
+          <img
+            src={posterUrl}
+            alt=""
+            className="aspect-[3/4] w-30 rounded-lg object-cover shadow-2xl ring-1 ring-white/10"
+          />
+        )}
+
         <div className="space-y-1">
-          <div className="text-sm font-medium">Buffering…</div>
-          <div className="text-xs text-neutral-400">{percent}%</div>
+          <h2 className="text-2xl font-semibold text-white">{title}</h2>
+          {meta && <p className="text-sm text-neutral-400">{meta}</p>}
         </div>
-        <div className="h-1 w-48 overflow-hidden rounded-full bg-white/10">
+
+        {/* <div className="relative h-24 w-24">
+          <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+            <circle
+              cx="50"
+              cy="50"
+              r={R}
+              fill="none"
+              stroke="rgba(255,255,255,0.1)"
+              strokeWidth="4"
+            />
+            <circle
+              cx="50"
+              cy="50"
+              r={R}
+              fill="none"
+              className="stroke-accent transition-[stroke-dashoffset] duration-500"
+              strokeWidth="4"
+              strokeDasharray={C}
+              strokeDashoffset={dashOffset}
+              strokeLinecap="round"
+            />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center text-lg font-semibold tabular-nums text-white">
+            {clamped}%
+          </div>
+        </div> */}
+
+        <div className="space-y-1 mt-10 animate-pulse">
+          <p className="text-sm font-medium text-neutral-200">Buffering stream…</p>
+          <p className="text-xs text-neutral-400">
+            {numPeers > 0
+              ? `Fetching pieces from ${numPeers} peer${numPeers === 1 ? '' : 's'}`
+              : 'Connecting to peers…'}
+          </p>
+        </div>
+
+        {/* <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
           <div
-            className="h-full rounded-full bg-accent transition-[width]"
-            style={{ width: `${percent}%` }}
+            className="h-full rounded-full bg-accent transition-[width] duration-500"
+            style={{ width: `${clamped}%` }}
+          />
+        </div> */}
+
+        <div className="grid w-full grid-cols-3 gap-4 mt-10">
+          <BufStat
+            icon={<ArrowDown className="h-3.5 w-3.5 text-accent" />}
+            value={fmtSpeed(downloadSpeedBps)}
+            valueClassName="text-accent"
+            label="Download"
+          />
+          <BufStat value={numPeers > 0 ? String(numPeers) : '—'} label="Active Peers" />
+          <BufStat
+            value={etaSec !== null ? `~${fmtEta(etaSec)}` : '—'}
+            label="Est. wait"
           />
         </div>
+
+        <button
+          type="button"
+          onClick={onBack}
+          className="mt-20 flex cursor-pointer items-center gap-1.5 text-sm text-neutral-400 transition hover:text-white"
+        >
+          <X className="h-4 w-4" />
+          Cancel and go back
+        </button>
       </div>
     </div>
   );
+}
+
+function BufStat({
+  icon,
+  value,
+  valueClassName,
+  label,
+}: {
+  icon?: ReactNode;
+  value: string;
+  valueClassName?: string;
+  label: string;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      <div
+        className={`flex items-center gap-1 text-sm font-semibold tabular-nums ${
+          valueClassName ?? 'text-neutral-100'
+        }`}
+      >
+        {icon}
+        {value}
+      </div>
+      <div className="text-[11px] uppercase tracking-wide text-neutral-500">{label}</div>
+    </div>
+  );
+}
+
+function fmtDuration(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function fmtEta(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s === 0 ? `${m}m` : `${m}m ${s}s`;
 }
 
 function ProgressBar({
@@ -880,13 +1206,26 @@ function ProgressBar({
     const rect = ref.current.getBoundingClientRect();
     return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * duration;
   };
+  // ponytail: AbortController so a fullscreen toggle / unmount mid-drag still
+  // cleans up the document-level mousemove/mouseup listeners.
+  const dragAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => dragAbortRef.current?.abort(), []);
   const handleMouseDown = (e: ReactMouseEvent<HTMLDivElement>) => {
+    dragAbortRef.current?.abort();
+    const ctl = new AbortController();
+    dragAbortRef.current = ctl;
     const t = getSeekTime(e.clientX);
     if (t !== null) onSeek(t);
-    const onMove = (ev: MouseEvent) => { const tt = getSeekTime(ev.clientX); if (tt !== null) onSeek(tt); };
-    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    document.addEventListener(
+      'mousemove',
+      (ev) => { const tt = getSeekTime(ev.clientX); if (tt !== null) onSeek(tt); },
+      { signal: ctl.signal },
+    );
+    document.addEventListener(
+      'mouseup',
+      () => { ctl.abort(); if (dragAbortRef.current === ctl) dragAbortRef.current = null; },
+      { signal: ctl.signal },
+    );
   };
   return (
     <div
@@ -1019,18 +1358,25 @@ function SubtitlesPanel({
   selected,
   trackState,
   onSelect,
+  onLoadLocal,
   style,
   onStyleChange,
+  offsetMs,
+  onOffsetChange,
   onClose,
 }: {
   tracks: SubtitleTrack[];
   selected: number;
   trackState: Map<number, TrackLoadState>;
   onSelect: (i: number) => void;
+  onLoadLocal: (f: File) => void;
   style: SubtitleStyle;
   onStyleChange: (s: SubtitleStyle) => void;
+  offsetMs: number;
+  onOffsetChange: (ms: number) => void;
   onClose: () => void;
 }) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [view, setView] = useState<'tracks' | 'style'>('tracks');
   const quotaHit = [...trackState.values()].some((s) => s === 'quota');
 
@@ -1094,9 +1440,31 @@ function SubtitlesPanel({
             </p>
           )}
 
-          <button type="button" onClick={() => setView('style')} className="cursor-pointer text-xs text-accent hover:text-accent-light">
-            Customize subtitle style →
-          </button>
+          {selected >= 0 && (
+            <SubtitleOffsetControl offsetMs={offsetMs} onChange={onOffsetChange} />
+          )}
+
+          <div className="flex items-center justify-between gap-2">
+            <button type="button" onClick={() => fileInputRef.current?.click()}
+              className="cursor-pointer text-xs text-neutral-400 hover:text-neutral-200">
+              Load from device…
+            </button>
+            <button type="button" onClick={() => setView('style')}
+              className="cursor-pointer text-xs text-accent hover:text-accent-light">
+              Customize style →
+            </button>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".srt,.vtt,text/vtt,application/x-subrip"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onLoadLocal(f);
+              e.target.value = ''; // allow reselecting the same file
+            }}
+          />
         </div>
       ) : (
         <div className="space-y-4">
@@ -1289,6 +1657,44 @@ function SpeedPanel({
             {s}×
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function SubtitleOffsetControl({
+  offsetMs,
+  onChange,
+}: {
+  offsetMs: number;
+  onChange: (ms: number) => void;
+}) {
+  const formatted = `${offsetMs >= 0 ? '+' : ''}${(offsetMs / 1000).toFixed(1)}s`;
+  // Positive = subtitles appear later than original; negative = earlier.
+  const STEP = 100;
+  const BIG_STEP = 500;
+  return (
+    <div className="rounded-md bg-white/5 px-3 py-2">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-xs font-medium text-neutral-300">Subtitle delay</span>
+        <span className="text-xs tabular-nums text-neutral-200">{formatted}</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <button type="button" onClick={() => onChange(offsetMs - BIG_STEP)}
+          className="cursor-pointer flex-1 rounded-md bg-white/5 px-2 py-1 text-xs text-neutral-200 hover:bg-white/10"
+          title="Earlier 0.5s">−0.5s</button>
+        <button type="button" onClick={() => onChange(offsetMs - STEP)}
+          className="cursor-pointer flex-1 rounded-md bg-white/5 px-2 py-1 text-xs text-neutral-200 hover:bg-white/10"
+          title="Earlier 0.1s">−0.1s</button>
+        <button type="button" onClick={() => onChange(0)}
+          className="cursor-pointer rounded-md bg-white/5 px-2 py-1 text-xs text-neutral-400 hover:bg-white/10"
+          disabled={offsetMs === 0} title="Reset">0</button>
+        <button type="button" onClick={() => onChange(offsetMs + STEP)}
+          className="cursor-pointer flex-1 rounded-md bg-white/5 px-2 py-1 text-xs text-neutral-200 hover:bg-white/10"
+          title="Later 0.1s">+0.1s</button>
+        <button type="button" onClick={() => onChange(offsetMs + BIG_STEP)}
+          className="cursor-pointer flex-1 rounded-md bg-white/5 px-2 py-1 text-xs text-neutral-200 hover:bg-white/10"
+          title="Later 0.5s">+0.5s</button>
       </div>
     </div>
   );

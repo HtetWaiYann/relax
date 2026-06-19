@@ -42,7 +42,10 @@ const INITIAL_BUFFER_BYTES = Number(process.env['INITIAL_BUFFER_BYTES'] ?? 12 * 
 // the position" — webtorrent already detects existing pieces on disk on
 // re-add, so resume reads from cache directly.
 const CACHE_WINDOW_MB = Number(process.env['CACHE_WINDOW_MB'] ?? 50);
+// 1 s is fine once playback is steady; during the initial prebuffer the
+// UI feels stuck for too long without finer-grained ticks.
 const STATS_INTERVAL_MS = 1000;
+const STATS_INTERVAL_PREBUFFER_MS = 250;
 
 interface StartArgs {
   infoHash: string;
@@ -159,7 +162,7 @@ const cacheSettingsPath = join(app.getPath('userData'), 'cache_settings.json');
 interface CacheSettings { ttlDays: number }
 function readCacheSettings(): CacheSettings {
   try { return JSON.parse(readFileSync(cacheSettingsPath, 'utf8')) as CacheSettings; }
-  catch { return { ttlDays: 0 }; }
+  catch { return { ttlDays: 7 }; }
 }
 function writeCacheSettings(s: CacheSettings) {
   try { writeFileSync(cacheSettingsPath, JSON.stringify(s)); }
@@ -174,6 +177,7 @@ const finishedHashes = new Set<string>();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let client: any | null = null;
+let streamServer: ReturnType<typeof createServer> | null = null;
 const sessions = new Map<string, Session>();
 const subscribers = new Map<string, Set<WebContents>>();
 
@@ -294,6 +298,11 @@ function buildStats(torrent: TorrentLike, sess: Session): Stats {
   const initial = totalNeeded > 0 ? Math.min(1, sess.initialDownloaded / totalNeeded) : 1;
   const audios = audioStreams(sess.probe);
   const selectedAudio = audios.find((a) => a.typeIndex === sess.selectedAudioTypeIdx);
+  const containerDefault = audios.find((a) => a.isDefault) ?? audios[0];
+  const audioOverride =
+    !!sess.probe &&
+    audios.length > 1 &&
+    sess.selectedAudioTypeIdx !== (containerDefault?.typeIndex ?? 0);
   return {
     infoHash: torrent.infoHash,
     downloadSpeedBps: Math.round(torrent.downloadSpeed ?? 0),
@@ -306,7 +315,8 @@ function buildStats(torrent: TorrentLike, sess: Session): Stats {
     initialBufferProgress: initial,
     bufferingComplete: sess.bufferingComplete,
     durationSeconds: sess.probe?.durationSeconds ?? 0,
-    needsRemux: !!sess.probe && audioNeedsTranscode(selectedAudio?.codecName),
+    needsRemux:
+      !!sess.probe && (audioNeedsTranscode(selectedAudio?.codecName) || audioOverride),
   };
 }
 
@@ -357,8 +367,17 @@ async function start(args: StartArgs): Promise<StartResult> {
     };
     sessions.set(args.infoHash, sess);
     const tick = () => broadcastStats(args.infoHash, buildStats(torrent, sess!));
-    sess.statsTimer = setInterval(tick, STATS_INTERVAL_MS);
-    primeInitialBuffer(file, sess, tick);
+    tick();
+    sess.statsTimer = setInterval(tick, STATS_INTERVAL_PREBUFFER_MS);
+    primeInitialBuffer(file, sess, () => {
+      tick();
+      // Slow the cadence once the prebuffer is done — steady playback
+      // doesn't need 4 Hz stats.
+      if (sess!.bufferingComplete && sess!.statsTimer) {
+        clearInterval(sess!.statsTimer);
+        sess!.statsTimer = setInterval(tick, STATS_INTERVAL_MS);
+      }
+    });
   }
 
   // Mark the cache entry so the Settings page can show it. Title/poster are
@@ -527,7 +546,7 @@ function evictOldEntries() {
     if (e.lastAccessedAt > cutoff) continue;
     if (e.torrentName) {
       try { rmSync(join(downloadDir, e.torrentName), { recursive: true, force: true }); }
-      catch { /* noop */ }
+      catch (err) { console.warn('[torrent] evict rmSync failed', e.torrentName, err); }
     }
     delete idx[hash];
     changed = true;
@@ -541,9 +560,9 @@ function evictOldEntries() {
       try {
         const st = statSync(dir);
         if (st.mtimeMs <= cutoff) rmSync(dir, { recursive: true, force: true });
-      } catch { /* noop */ }
+      } catch (err) { console.warn('[torrent] evict orphan failed', name, err); }
     }
-  } catch { /* noop */ }
+  } catch (err) { console.warn('[torrent] evict orphan scan failed', err); }
   if (changed) writeCacheIndex(idx);
 }
 
@@ -734,22 +753,27 @@ async function handleStream(
     return;
   }
   const sess = sessions.get(infoHash);
-  // Don't await probe — it was kicked during prebuffer and is almost always
-  // ready by now. If not, serve passthrough; the file is most likely a
-  // Chromium-native codec (which is what passthrough handles correctly).
-  // Files that genuinely need remux (EAC3/DTS/TrueHD) race-lose this on
-  // very fast first requests, but probe completes within ms after that.
+  // Probe was kicked at 2 MB into the prebuffer drain, so this await is
+  // usually a no-op. Skipping it caused MEDIA_ERR_DECODE on files needing
+  // remux (EAC3/DTS/TrueHD/HEVC-10bit) — passthrough committed before the
+  // renderer saw needsRemux, and <video> has no second chance at src.
+  if (sess && !sess.probe) await ensureProbe(sess);
 
   const audios = audioStreams(sess?.probe ?? null);
   const selectedAudio = audios.find((a) => a.typeIndex === (sess?.selectedAudioTypeIdx ?? 0));
   const transcodeAudio = audioNeedsTranscode(selectedAudio?.codecName);
+  // Compare against what Chromium will pick from the raw container (the
+  // isDefault-flagged stream, else the first audio), NOT our pickDefaultAudio
+  // — those differ on BluRay rips with EAC3-default + AAC-alt, and we were
+  // matching against our own pick so the override branch never fired.
+  const containerDefault = audios.find((a) => a.isDefault) ?? audios[0];
   const audioOverride = !!sess?.probe
     && audios.length > 1
-    && sess.selectedAudioTypeIdx !== (pickDefaultAudio(sess.probe)?.typeIndex ?? 0);
+    && sess.selectedAudioTypeIdx !== (containerDefault?.typeIndex ?? 0);
   const remux = !!sess?.probe && (transcodeAudio || audioOverride);
 
   const size = file.length;
-  const contentType = remux ? 'video/mp4' : (mime.lookup(file.name) || 'video/mp4');
+  const contentType = remux ? 'video/x-matroska' : (mime.lookup(file.name) || 'video/mp4');
   const range = parseRange(req.headers.range, size);
   // ?t={seconds} overrides byte-range math — used by the renderer to seek in
   // remux mode where Chromium can't compute byte offsets natively.
@@ -798,6 +822,23 @@ async function handleStream(
   // total would make it report a truncated download when ffmpeg's output
   // doesn't match the lie. Accept-Ranges left at "bytes" so the player can
   // still request bytes=0- on the initial request.
+  // Seek remux: pieces around the new offset may not be on disk yet —
+  // ffmpeg would read zero-fill and emit corrupt NAL units that crash the
+  // VideoToolbox decoder. setStreamPosition already nudged piece priority;
+  // drain a small read window so we serve real bytes. Best-effort: skip on
+  // error so a slow swarm doesn't hang the request forever.
+  if (startSeconds > 0 && duration > 0 && size > 0) {
+    const byte = Math.floor((startSeconds / duration) * size);
+    const PREBUFFER = 4 * 1024 * 1024;
+    const end = Math.min(size - 1, byte + PREBUFFER - 1);
+    await new Promise<void>((resolve) => {
+      const s = file.createReadStream({ start: byte, end });
+      s.on('data', () => { /* drain */ });
+      s.on('end', () => resolve());
+      s.on('error', () => resolve());
+    });
+  }
+
   res.writeHead(200, {
     'Accept-Ranges': 'bytes',
     'Content-Type': contentType,
@@ -906,6 +947,7 @@ async function handleMkvSubtitle(
 }
 
 export function startStreamServer() {
+  if (streamServer) return streamServer;
   const server = createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
@@ -934,7 +976,25 @@ export function startStreamServer() {
   server.listen(STREAM_PORT, '127.0.0.1', () => {
     console.log(`[torrent] stream server on http://localhost:${STREAM_PORT}`);
   });
+  streamServer = server;
   return server;
+}
+
+// Tear down torrent client + stream server. Called on app quit so peer
+// connections close cleanly instead of being yanked when the process dies.
+export async function shutdownTorrentSubsystem(): Promise<void> {
+  if (client) {
+    const c = client;
+    client = null;
+    await new Promise<void>((resolve) => {
+      try { c.destroy(() => resolve()); } catch { resolve(); }
+    });
+  }
+  if (streamServer) {
+    const s = streamServer;
+    streamServer = null;
+    await new Promise<void>((resolve) => s.close(() => resolve()));
+  }
 }
 
 export const STREAM_BASE_URL = `http://localhost:${STREAM_PORT}`;
@@ -986,6 +1046,17 @@ export function registerTorrentIpc() {
     }
     set.add(e.sender);
     e.sender.once('destroyed', () => set?.delete(e.sender));
+    // Push the current snapshot so the renderer doesn't sit on `null` until
+    // the next tick (otherwise the buffering overlay shows 0/0/0% during the
+    // 1 s window between subscribe and first interval fire — and on fast
+    // swarms the buffer can be done before that window closes).
+    const sess = sessions.get(infoHash);
+    if (sess && client) {
+      void client.get(infoHash).then((t: TorrentLike | null) => {
+        if (!t || e.sender.isDestroyed()) return;
+        e.sender.send('torrent:stats', buildStats(t, sess));
+      });
+    }
   });
   ipcMain.on('torrent:unsubscribe', (e, infoHash: string) => {
     subscribers.get(infoHash)?.delete(e.sender);

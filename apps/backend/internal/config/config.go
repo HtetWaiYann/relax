@@ -19,7 +19,14 @@ type Config struct {
 	AppEnv              string `env:"APP_ENV" envDefault:"development"`
 	TorrentioBaseURL    string `env:"TORRENTIO_BASE_URL" envDefault:"https://torrentio.strem.fun"`
 	OpenSubtitlesAPIKey string `env:"OPENSUBTITLES_API_KEY"`
+	WyzieAPIKey         string `env:"WYZIE_API_KEY"`
 	SubtitleCacheDir    string `env:"SUBTITLE_CACHE_DIR" envDefault:"./subtitle_cache"`
+	// HistoryTTLDays caps watch_progress retention. 0 disables the startup
+	// cleanup; otherwise rows with last_watched_at older than this many days
+	// are deleted at backend init.
+	HistoryTTLDays int `env:"HISTORY_TTL_DAYS" envDefault:"90"`
+	// SubtitleCacheTTLDays caps cached .vtt retention. 0 disables.
+	SubtitleCacheTTLDays int `env:"SUBTITLE_CACHE_TTL_DAYS" envDefault:"30"`
 }
 
 // Load reads .env (if present) and overlays os.Environ() into a Config.

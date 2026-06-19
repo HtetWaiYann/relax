@@ -9,9 +9,9 @@ import {
   type AppPaths,
   type CacheStats,
 } from '../lib/torrent';
-import { useClearWatchHistory } from '../lib/queries';
+import { useClearWatchHistory, useClearWatchlist } from '../lib/queries';
 
-type ModalKind = 'none' | 'clear-cache' | 'clear-history';
+type ModalKind = 'none' | 'clear-cache' | 'clear-history' | 'clear-watchlist';
 
 export function Settings() {
   const [stats, setStats] = useState<CacheStats | null>(null);
@@ -21,6 +21,7 @@ export function Settings() {
   const [modal, setModal] = useState<ModalKind>('none');
   const [clearing, setClearing] = useState(false);
   const clearHistory = useClearWatchHistory();
+  const clearWatchlist = useClearWatchlist();
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -54,6 +55,11 @@ export function Settings() {
 
   const clearAllHistory = async () => {
     await clearHistory.mutateAsync();
+    setModal('none');
+  };
+
+  const clearAllWatchlist = async () => {
+    await clearWatchlist.mutateAsync();
     setModal('none');
   };
 
@@ -135,6 +141,13 @@ export function Settings() {
           >
             Clear watch history
           </button>
+          <button
+            type="button"
+            onClick={() => setModal('clear-watchlist')}
+            className="cursor-pointer rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-neutral-200 transition hover:bg-white/10"
+          >
+            Clear watchlist
+          </button>
         </div>
       </section>
 
@@ -189,6 +202,17 @@ export function Settings() {
           danger
           onCancel={() => setModal('none')}
           onConfirm={() => void clearAllHistory()}
+        />
+      )}
+      {modal === 'clear-watchlist' && (
+        <Modal
+          title="Clear watchlist?"
+          body="This will remove all titles from your watchlist. This cannot be undone."
+          confirmLabel={clearWatchlist.isPending ? 'Clearing…' : 'Clear watchlist'}
+          danger
+          confirmDisabled={clearWatchlist.isPending}
+          onCancel={() => setModal('none')}
+          onConfirm={() => void clearAllWatchlist()}
         />
       )}
     </div>

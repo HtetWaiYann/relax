@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,6 +97,9 @@ func (s *RelaxServer) DownloadSubtitle(
 	cacheKey := subtitles.CacheKey(ref)
 	cached := filepath.Join(s.subtitleCache, cacheKey+".vtt")
 	if _, err := os.Stat(cached); err == nil {
+		// Bump mtime so the startup sweeper treats this file as recently used.
+		now := time.Now()
+		_ = os.Chtimes(cached, now, now)
 		return connect.NewResponse(&relaxv1.DownloadSubtitleResponse{
 			Url: s.subtitleURL(cacheKey),
 		}), nil
@@ -121,4 +126,37 @@ func (s *RelaxServer) DownloadSubtitle(
 
 func (s *RelaxServer) subtitleURL(key string) string {
 	return fmt.Sprintf("http://localhost:%d/subtitles/%s.vtt", s.port, key)
+}
+
+// SweepSubtitleCache deletes cached .vtt files in dir whose mtime is older
+// than ttlDays. mtime is bumped on each cache hit (see DownloadSubtitle), so
+// this approximates last-accessed eviction. Pass ttlDays<=0 to disable.
+func SweepSubtitleCache(dir string, ttlDays int) {
+	if ttlDays <= 0 || dir == "" {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		// Missing dir is fine — first run hasn't created it yet.
+		return
+	}
+	cutoff := time.Now().AddDate(0, 0, -ttlDays)
+	deleted := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".vtt") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			if err := os.Remove(filepath.Join(dir, e.Name())); err == nil {
+				deleted++
+			}
+		}
+	}
+	if deleted > 0 {
+		slog.Info("subtitle cache: aged out files", "count", deleted, "ttl_days", ttlDays)
+	}
 }

@@ -1,5 +1,10 @@
 import { Link, NavLink } from 'react-router-dom';
-import { Settings as SettingsIcon } from 'lucide-react';
+import {
+  Home as HomeIcon,
+  Bookmark,
+  Settings as SettingsIcon,
+  type LucideIcon,
+} from 'lucide-react';
 import { APP_NAME } from '@relax/shared-utils';
 import { SearchBar } from './SearchBar';
 import logoUrl from '../assets/relax_logo.svg';
@@ -9,6 +14,12 @@ const NAV = [
   { to: '/movies', label: 'Movies', end: false },
   { to: '/series', label: 'Series', end: false },
   { to: '/anime', label: 'Anime', end: false },
+];
+
+const ICON_NAV: { to: string; label: string; icon: LucideIcon; end: boolean }[] = [
+  { to: '/', label: 'Home', icon: HomeIcon, end: true },
+  { to: '/watchlist', label: 'My Watchlist', icon: Bookmark, end: false },
+  { to: '/settings', label: 'Settings', icon: SettingsIcon, end: false },
 ];
 
 export function TopBar() {
@@ -42,20 +53,27 @@ export function TopBar() {
 
         <div className="flex flex-1 items-center justify-end gap-2">
           <SearchBar />
-          <NavLink
-            to="/settings"
-            aria-label="Settings"
-            className={({ isActive }) =>
-              [
-                'rounded-md p-2 transition',
-                isActive
-                  ? 'bg-accent-light/20 text-accent-light'
-                  : 'text-neutral-400 hover:bg-white/10 hover:text-neutral-100',
-              ].join(' ')
-            }
-          >
-            <SettingsIcon className="h-4 w-4" />
-          </NavLink>
+          <div className="ml-1 flex items-center gap-0.5 border-l border-border-subtle/60 pl-2">
+            {ICON_NAV.map(({ to, label, icon: Icon, end }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={end}
+                aria-label={label}
+                title={label}
+                className={({ isActive }) =>
+                  [
+                    'rounded-md p-2 transition',
+                    isActive
+                      ? 'bg-primary/20 text-primary'
+                      : 'text-neutral-400 hover:bg-white/10 hover:text-neutral-100',
+                  ].join(' ')
+                }
+              >
+                <Icon className="h-4 w-4" />
+              </NavLink>
+            ))}
+          </div>
         </div>
       </div>
     </header>

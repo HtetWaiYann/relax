@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package relax.v1;
+
+import "google/protobuf/timestamp.proto";
+import "relax/v1/media.proto";
+
+option go_package = "relax/gen/relax/v1;relaxv1";
+
+message WatchlistItem {
+  string media_id = 1;
+  MediaType media_type = 2;
+  string title = 3;
+  string poster_url = 4;
+  string backdrop_url = 5;
+  string overview = 6;
+  double vote_average = 7;
+  int32 release_year = 8;
+  repeated string genres = 9;
+  google.protobuf.Timestamp added_at = 10;
+}
+
+enum WatchlistSort {
+  WATCHLIST_SORT_UNSPECIFIED = 0;
+  WATCHLIST_SORT_ADDED_AT = 1;
+  WATCHLIST_SORT_TITLE = 2;
+  WATCHLIST_SORT_RATING = 3;
+}
+
+enum SortOrder {
+  SORT_ORDER_UNSPECIFIED = 0;
+  SORT_ORDER_ASC = 1;
+  SORT_ORDER_DESC = 2;
+}
+
+enum WatchlistFilter {
+  WATCHLIST_FILTER_UNSPECIFIED = 0;
+  WATCHLIST_FILTER_ALL = 1;
+  WATCHLIST_FILTER_MOVIE = 2;
+  WATCHLIST_FILTER_TV = 3;
+}

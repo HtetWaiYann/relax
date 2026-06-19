@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Play } from 'lucide-react';
 import { MediaType, type WatchProgress } from '@relax/types';
-import { useDeleteWatchProgress } from '../lib/queries';
+import { mediaTypeToRoute, useDeleteWatchProgress } from '../lib/queries';
 import type { WatchState } from '../pages/Watch';
 
 export function ContinueCard({ item }: { item: WatchProgress }) {
@@ -15,7 +15,7 @@ export function ContinueCard({ item }: { item: WatchProgress }) {
     : 0;
   const isTV = item.mediaType === MediaType.TV;
 
-  const onClick = () => {
+  const playStream = () => {
     const state: WatchState = {
       infoHash: item.infoHash,
       fileIdx: item.fileIdx,
@@ -32,28 +32,37 @@ export function ContinueCard({ item }: { item: WatchProgress }) {
     navigate(`/watch/${item.infoHash}`, { state });
   };
 
+  const openDetail = () => {
+    const tmdbId = Number(item.mediaId);
+    if (!tmdbId) return;
+    navigate(`/title/${mediaTypeToRoute(item.mediaType)}/${tmdbId}`);
+  };
+
   return (
     <div
-      className="group flex w-[170px] shrink-0 cursor-pointer flex-col gap-2 sm:w-[180px]"
-      onClick={onClick}
+      className="group flex w-[170px] shrink-0 flex-col gap-2 sm:w-[180px]"
+      onClick={openDetail}
       onContextMenu={(e) => {
         e.preventDefault();
         setMenu({ x: e.clientX, y: e.clientY });
       }}
     >
-      <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-surface-elevated ring-1 ring-border-subtle transition">
+      <div className="relative cursor-zoom-in aspect-[2/3] overflow-hidden rounded-xl bg-surface-elevated ring-1 ring-border-subtle transition">
         {item.posterUrl ? (
           <img src={item.posterUrl} alt={item.title} className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-xs text-neutral-500">No poster</div>
         )}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-0 transition group-hover:opacity-100" />
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 transition group-hover:opacity-100">
-          <div className="rounded-full bg-primary p-3 shadow-lg ring-2 ring-accent-light/50">
-            <Play className="h-5 w-5 fill-white text-white" />
-          </div>
-        </div>
-        <div className="absolute inset-x-0 bottom-0 h-1 bg-black/60">
+        <button
+          type="button"
+          aria-label="Resume playback"
+          onClick={(e) => { e.stopPropagation(); playStream(); }}
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-full bg-primary p-3 opacity-0 shadow-lg ring-2 ring-accent-light/50 transition group-hover:opacity-100"
+        >
+          <Play className="h-5 w-5 fill-white text-white" />
+        </button>
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1 bg-black/60">
           <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
         </div>
       </div>

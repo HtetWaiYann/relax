@@ -152,15 +152,14 @@ export function spawnRemux(opts: {
     '-c:a', opts.transcodeAudio ? 'aac' : 'copy',
   );
   if (opts.transcodeAudio) args.push('-b:a', '192k', '-ac', '2');
-  // Fragmented MP4 over a pipe writes a real moov atom up front with track
-  // duration metadata — Matroska from a pipe can't (the SegmentInfo Duration
-  // is only patched in on close, which never happens for live remux), which
-  // makes Chromium report `video.duration = NaN` and disables seeking entirely.
-  args.push(
-    '-f', 'mp4',
-    '-movflags', 'empty_moov+default_base_moof+frag_keyframe+omit_tfhd_offset',
-    'pipe:1',
-  );
+  // Matroska output. We previously used fragmented MP4 to give Chromium a
+  // real video.duration over a pipe — but the renderer overrides duration
+  // with the probe (VideoPlayer.tsx effectiveDuration) and seeking in remux
+  // mode swaps the URL via ?t= rather than touching v.currentTime, so the
+  // NaN duration is harmless. fMP4 over a pipe with empty_moov + copied
+  // H.264 from MKV intermittently produces an init segment Chromium can't
+  // parse ("Unsupported pixel format: -1"); MKV → MKV avoids it.
+  args.push('-f', 'matroska', 'pipe:1');
   return spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
