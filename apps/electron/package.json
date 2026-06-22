@@ -1,6 +1,6 @@
 {
   "name": "@relax/electron",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "productName": "Relax",
   "description": "RELAX desktop app — Electron + Vite + React renderer.",
