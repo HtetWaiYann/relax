@@ -156,6 +156,16 @@
     border-bottom: 1px solid currentColor;
   }
   .notice a:hover { color: #0A4F3D; }
+  .notice code {
+    margin-top: 1.25rem;
+    display: inline-block;
+    background: #0f1b1760;
+    color: #DDEFE5;
+    padding: 0.15rem 0.55rem;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
   .divider {
     width: 1px; height: 32px; background: #C9C5B6; margin-bottom: 2.5rem;
   }
@@ -220,6 +230,9 @@
     </div>
 
     <p class="meta">Free and open-source · macOS 12+ · Windows 10+</p>
+    <p class="notice">
+      <strong>macOS:</strong> the app isn't notarized, so Gatekeeper will block it on first launch. After dragging RELAX to Applications, run this once in Terminal to clear the quarantine flag: <code>xattr -cr /Applications/RELAX.app</code>
+    </p>
     <p class="notice">
       Built by <a href="https://www.htetwaiyan.com" target="_blank" rel="noopener">Htet Wai Yan</a> for his own personal use — use at your own risk. Want to build it yourself?
       Check the source on <a href="https://github.com/HtetWaiYann/relax" target="_blank" rel="noopener">GitHub</a>.
