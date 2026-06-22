@@ -221,10 +221,22 @@ export function VideoPlayer(props: VideoPlayerProps) {
 
     void getStreamAudioTracks(infoHash, fileIdx).then((at) => {
       if (cancelled) return;
-      setAudioTracks(at);
       const def = at.find((a) => a.isDefault) ?? at[0];
+      console.info('[audio] backend tracks', {
+        infoHash, fileIdx,
+        count: at.length,
+        tracks: at.map(({ id, typeIndex, language, codec, channels, isDefault }) => ({
+          id, typeIndex, language, codec, channels, isDefault,
+        })),
+        defaultId: def?.id ?? null,
+      });
+      setAudioTracks(at);
       if (def) setSelectedAudioId(def.id);
-    }).catch(() => { if (!cancelled) setAudioTracks([]); });
+    }).catch((err) => {
+      if (cancelled) return;
+      console.warn('[audio] backend tracks failed', err);
+      setAudioTracks([]);
+    });
     return () => { cancelled = true; };
   }, [infoHash, fileIdx, initialBufferReady, tmdbId, mediaType, season, episode]);
 
@@ -474,6 +486,19 @@ export function VideoPlayer(props: VideoPlayerProps) {
       setReBuffering(false);
       setAudioSwitching(false);
       decodeRetryRef.current = 0;
+      // ponytail: chromium-only counters. If audioBytesDecoded stays 0 while
+      // videoBytesDecoded climbs, the audio codec isn't being decoded (likely
+      // EAC3/DTS/TrueHD passthrough). Swap to a probed track or enable remux.
+      const ext = v as HTMLVideoElement & {
+        webkitAudioDecodedByteCount?: number;
+        webkitVideoDecodedByteCount?: number;
+      };
+      console.info('[audio] canplay', {
+        muted: v.muted,
+        volume: v.volume,
+        audioBytesDecoded: ext.webkitAudioDecodedByteCount ?? 0,
+        videoBytesDecoded: ext.webkitVideoDecodedByteCount ?? 0,
+      });
     };
     const onVolume = () => {
       setVolume(v.volume);
@@ -482,6 +507,20 @@ export function VideoPlayer(props: VideoPlayerProps) {
     const onRate = () => setRate(v.playbackRate);
     const onMeta = () => {
       setDuration(v.duration || 0);
+      const ext = v as HTMLVideoElement & {
+        webkitAudioDecodedByteCount?: number;
+        webkitVideoDecodedByteCount?: number;
+        audioTracks?: { length: number };
+      };
+      console.info('[audio] loadedmetadata', {
+        src: v.currentSrc,
+        duration: v.duration,
+        muted: v.muted,
+        volume: v.volume,
+        elementAudioTrackCount: ext.audioTracks?.length ?? 0,
+        audioBytesDecoded: ext.webkitAudioDecodedByteCount ?? 0,
+        videoBytesDecoded: ext.webkitVideoDecodedByteCount ?? 0,
+      });
       // Decode-retry path: restore the failed timestamp before play resumes.
       if (retrySeekRef.current !== null) {
         try { v.currentTime = retrySeekRef.current; } catch { /* noop */ }
@@ -622,6 +661,10 @@ export function VideoPlayer(props: VideoPlayerProps) {
 
   const selectAudio = useCallback(async (track: AudioTrack) => {
     if (track.id === selectedAudioId) return;
+    console.info('[audio] switch requested', {
+      id: track.id, typeIndex: track.typeIndex, language: track.language,
+      codec: track.codec, channels: track.channels, resumeAt: displayTime,
+    });
     setSelectedAudioId(track.id);
     setAudioSwitching(true);
     // Resume playback from where we are now — the new ffmpeg pipe starts at
@@ -631,6 +674,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
     setCurrentTime(0);
     setBufferedEnd(0);
     const url = await switchStreamAudio(infoHash, fileIdx, track.typeIndex, resumeAt);
+    console.info('[audio] switch result', { trackId: track.id, url });
     if (!url) {
       setAudioSwitching(false);
       return;
@@ -1747,16 +1791,20 @@ function CueOverlay({
   const bottomPct = shiftedForControls
     ? Math.max(style.bottomPercent, 12)
     : style.bottomPercent;
-  const lines = text.split('\n');
+  const lines = text
+    .split('\n')
+    .map((l) => l.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .slice(0, 2);
   return (
     <div
-      className="pointer-events-none absolute left-1/2 z-10 max-w-[80%] -translate-x-1/2 text-center"
+      className="pointer-events-none absolute left-1/2 z-10 flex max-w-[80%] -translate-x-1/2 flex-col items-center gap-1"
       style={{ bottom: `${bottomPct}%` }}
     >
       {lines.map((line, i) => (
         <div
           key={i}
-          className="my-0.5 inline-block rounded px-2 py-0.5"
+          className="rounded px-2 py-0.5 text-center break-words"
           style={{
             fontSize: `${style.fontSize}px`,
             color: style.color,
