@@ -1031,6 +1031,10 @@ export function registerTorrentIpc() {
   // Run eviction once at startup and hourly thereafter.
   setTimeout(evictOldEntries, 30_000);
   setInterval(evictOldEntries, 60 * 60 * 1000);
+  ipcMain.handle('app:relaunch', async () => {
+    app.relaunch();
+    app.quit();
+  });
   ipcMain.handle('app:paths', async () => ({
     userData: app.getPath('userData'),
     torrents: downloadDir,

@@ -91,6 +91,7 @@ export interface TorrentBridge {
 interface RelaxBridgeShape {
   getBackendUrl(): string;
   getAppName(): string;
+  restartApp(): Promise<void>;
   torrent: TorrentBridge;
 }
 
