@@ -26,8 +26,13 @@ import ffprobeStatic from 'ffprobe-static';
 const execFileAsync = promisify(execFile);
 
 // ffmpeg-static exports a default string; ffprobe-static exports { path }.
-export const FFMPEG_PATH = (ffmpegStatic as unknown as string) ?? '';
-export const FFPROBE_PATH = (ffprobeStatic as { path: string }).path ?? '';
+// In packaged builds the path resolves inside app.asar, but binaries can't
+// execute from within an asar archive — electron-builder unpacks them via
+// asarUnpack (see package.json), so rewrite the path to the unpacked tree.
+// In dev the path has no "app.asar" segment and the replace is a no-op.
+const unpacked = (p: string) => p.replace('app.asar', 'app.asar.unpacked');
+export const FFMPEG_PATH = unpacked((ffmpegStatic as unknown as string) ?? '');
+export const FFPROBE_PATH = unpacked((ffprobeStatic as { path: string }).path ?? '');
 
 const UNSUPPORTED_AUDIO_CODECS = new Set([
   'ac3', 'eac3', 'dts', 'dca', 'truehd', 'mlp',
