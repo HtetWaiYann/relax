@@ -181,6 +181,20 @@ let streamServer: ReturnType<typeof createServer> | null = null;
 const sessions = new Map<string, Session>();
 const subscribers = new Map<string, Set<WebContents>>();
 
+// Safeguard: webtorrent can throw synchronously from a wire's handshake
+// listener when a peer completes its handshake a tick after its torrent was
+// removed/destroyed (this.swarm.client is null -> "reading 'dht'"). That path
+// bypasses the client 'error' handler and surfaces as an uncaughtException,
+// crashing the main process. Swallow only that known teardown race.
+// ponytail: narrow match by design — anything else still crashes loudly.
+process.on('uncaughtException', (err) => {
+  if (err instanceof TypeError && /reading '(dht|client|swarm)'/.test(err.message)) {
+    console.warn('[torrent] ignored peer-teardown race:', err.message);
+    return;
+  }
+  throw err;
+});
+
 function ensureClient() {
   if (!client) {
     client = new WebTorrent();
