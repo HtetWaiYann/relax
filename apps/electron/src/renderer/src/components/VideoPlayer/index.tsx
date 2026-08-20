@@ -65,7 +65,6 @@ export function VideoPlayer(props: VideoPlayerProps) {
     setStreamUrl,
     seekOffsetSeconds,
     setSeekOffsetSeconds,
-    currentTime,
     setCurrentTime,
     volume,
     setVolume,
