@@ -145,12 +145,22 @@ message BrowseMediaRequest {
   MediaType media_type = 1;
   bool anime = 2;
   int32 page = 3;
+  // 0 = no genre filter. Movie and TV genre IDs differ; get them from GetGenres.
+  int32 genre_id = 4;
 }
 
 message BrowseMediaResponse {
   repeated MediaSummary results = 1;
   int32 page = 2;
   int32 total_pages = 3;
+}
+
+message GetGenresRequest {
+  MediaType media_type = 1;
+}
+
+message GetGenresResponse {
+  repeated Genre genres = 1;
 }
 
 message GetPersonDetailRequest {
@@ -246,6 +256,7 @@ service RelaxService {
   rpc SearchMedia(SearchMediaRequest) returns (SearchMediaResponse);
   rpc GetMediaDetail(GetMediaDetailRequest) returns (GetMediaDetailResponse);
   rpc BrowseMedia(BrowseMediaRequest) returns (BrowseMediaResponse);
+  rpc GetGenres(GetGenresRequest) returns (GetGenresResponse);
   rpc GetPersonDetail(GetPersonDetailRequest) returns (GetPersonDetailResponse);
   rpc GetStreams(GetStreamsRequest) returns (GetStreamsResponse);
   rpc SearchSubtitles(SearchSubtitlesRequest) returns (SearchSubtitlesResponse);
