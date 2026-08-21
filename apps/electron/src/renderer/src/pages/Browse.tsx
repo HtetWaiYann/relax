@@ -1,8 +1,9 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { PosterCard } from '../components/PosterCard';
 import { PosterCardSkeleton } from '../components/Skeleton';
 import { LoadMore } from '../components/LoadMore';
-import { useInfiniteBrowseMedia, type BrowseKind } from '../lib/queries';
+import { Dropdown, type DropdownOption } from '../components/Dropdown';
+import { useGenres, useInfiniteBrowseMedia, type BrowseKind } from '../lib/queries';
 
 interface BrowseProps {
   kind: BrowseKind;
@@ -11,6 +12,12 @@ interface BrowseProps {
 }
 
 export function Browse({ kind, title, subtitle }: BrowseProps) {
+  const [genreId, setGenreId] = useState(0);
+  const genres = useGenres(kind);
+  const genreOptions: DropdownOption<number>[] = [
+    { value: 0, label: 'All genres' },
+    ...(genres.data?.genres ?? []).map((g) => ({ value: g.id, label: g.name })),
+  ];
   const {
     data,
     isLoading,
@@ -18,20 +25,36 @@ export function Browse({ kind, title, subtitle }: BrowseProps) {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = useInfiniteBrowseMedia(kind);
+  } = useInfiniteBrowseMedia(kind, genreId);
 
-  // Reset to top when switching kinds.
+  // Reset filter when switching kinds — movie/TV genre IDs don't carry over.
+  useEffect(() => {
+    setGenreId(0);
+  }, [kind]);
+
+  // Jump back to top whenever the kind or active genre changes.
   useEffect(() => {
     window.scrollTo({ top: 0 });
-  }, [kind]);
+  }, [kind, genreId]);
 
   const items = data?.pages.flatMap((p) => p.results) ?? [];
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-neutral-100">{title}</h1>
-        <p className="mt-1 text-sm text-neutral-400">{subtitle}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-neutral-100">{title}</h1>
+          <p className="mt-1 text-sm text-neutral-400">{subtitle}</p>
+        </div>
+
+        {genres.data && genres.data.genres.length > 0 && (
+          <Dropdown
+            value={genreId}
+            options={genreOptions}
+            onChange={setGenreId}
+            className="w-56 shrink-0"
+          />
+        )}
       </div>
 
       {error && (

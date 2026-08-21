@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, ChevronRight, ChevronLeft, ChevronDown, Download, Info, Check } from 'lucide-react';
+import { X, ChevronRight, ChevronLeft, Download, Info, Check } from 'lucide-react';
 import {
   MediaType,
   type MediaDetail,
@@ -12,6 +12,7 @@ import { useSeasonEpisodes, useSeriesProgress, useStreams } from '../lib/queries
 import { buildMagnet } from '../lib/torrent';
 import type { WatchState } from '../pages/Watch';
 import { StreamSourceCard } from './StreamSourceCard';
+import { Dropdown } from './Dropdown';
 import { Skeleton } from './Skeleton';
 
 interface WatchSidebarProps {
@@ -220,20 +221,14 @@ function SeriesPanel({
     <div className="flex min-h-0 flex-1 flex-col">
       {seasons.length > 0 && (
         <div className="px-5 pb-3">
-          <div className="relative">
-            <select
-              value={season}
-              onChange={(e) => setSeason(Number(e.target.value))}
-              className="w-full appearance-none rounded-md border border-border-subtle bg-surface-muted/60 px-3 py-2 pr-9 text-sm text-neutral-100 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/40"
-            >
-              {seasons.map((s) => (
-                <option key={s.seasonNumber} value={s.seasonNumber}>
-                  {s.name || `Season ${s.seasonNumber}`}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-          </div>
+          <Dropdown
+            value={season}
+            options={seasons.map((s) => ({
+              value: s.seasonNumber,
+              label: s.name || `Season ${s.seasonNumber}`,
+            }))}
+            onChange={setSeason}
+          />
         </div>
       )}
 

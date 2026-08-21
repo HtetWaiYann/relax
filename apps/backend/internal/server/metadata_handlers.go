@@ -88,11 +88,12 @@ func (s *RelaxServer) BrowseMedia(
 		resp *relaxv1.BrowseMediaResponse
 		err  error
 	)
+	genreID := req.Msg.GetGenreId()
 	switch req.Msg.GetMediaType() {
 	case relaxv1.MediaType_MEDIA_TYPE_MOVIE:
-		resp, err = s.meta.BrowseMovies(ctx, page)
+		resp, err = s.meta.BrowseMovies(ctx, page, genreID)
 	case relaxv1.MediaType_MEDIA_TYPE_TV:
-		resp, err = s.meta.BrowseTV(ctx, page, req.Msg.GetAnime())
+		resp, err = s.meta.BrowseTV(ctx, page, genreID, req.Msg.GetAnime())
 	default:
 		return nil, invalidArg("media_type must be MOVIE or TV")
 	}
@@ -100,6 +101,17 @@ func (s *RelaxServer) BrowseMedia(
 		return nil, s.tmdbError("BrowseMedia", err)
 	}
 	return connect.NewResponse(resp), nil
+}
+
+func (s *RelaxServer) GetGenres(
+	ctx context.Context,
+	req *connect.Request[relaxv1.GetGenresRequest],
+) (*connect.Response[relaxv1.GetGenresResponse], error) {
+	genres, err := s.meta.Genres(ctx, req.Msg.GetMediaType())
+	if err != nil {
+		return nil, s.tmdbError("GetGenres", err)
+	}
+	return connect.NewResponse(&relaxv1.GetGenresResponse{Genres: genres}), nil
 }
 
 func (s *RelaxServer) GetPersonDetail(

@@ -242,7 +242,8 @@ func (c *Client) IMDBID(ctx context.Context, mediaType relaxv1.MediaType, tmdbID
 }
 
 // BrowseMovies hits /discover/movie sorted by popularity, page-paginated.
-func (c *Client) BrowseMovies(ctx context.Context, page int32) (*relaxv1.BrowseMediaResponse, error) {
+// genreID > 0 filters via with_genres.
+func (c *Client) BrowseMovies(ctx context.Context, page, genreID int32) (*relaxv1.BrowseMediaResponse, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -252,6 +253,10 @@ func (c *Client) BrowseMovies(ctx context.Context, page int32) (*relaxv1.BrowseM
 		"include_adult": {"false"},
 	}
 	key := "discover/movie?page=" + strconv.Itoa(int(page))
+	if genreID > 0 {
+		q.Set("with_genres", strconv.Itoa(int(genreID)))
+		key += "&genre=" + strconv.Itoa(int(genreID))
+	}
 	d, err := getCached[tmdbPaginated[tmdbMovie]](ctx, c, key, "/discover/movie", q)
 	if err != nil {
 		return nil, err
@@ -266,7 +271,9 @@ func (c *Client) BrowseMovies(ctx context.Context, page int32) (*relaxv1.BrowseM
 // BrowseTV hits /discover/tv sorted by popularity, page-paginated.
 // When anime is true, filters to TV with the Animation genre (16) plus an
 // origin of Japan — TMDB's pragmatic "anime" recipe.
-func (c *Client) BrowseTV(ctx context.Context, page int32, anime bool) (*relaxv1.BrowseMediaResponse, error) {
+// genreID > 0 filters via with_genres. On the anime page a picked genre
+// replaces the default Animation (16) filter but keeps the ja/keyword recipe.
+func (c *Client) BrowseTV(ctx context.Context, page, genreID int32, anime bool) (*relaxv1.BrowseMediaResponse, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -284,7 +291,13 @@ func (c *Client) BrowseTV(ctx context.Context, page int32, anime bool) (*relaxv1
 		q.Set("without_keywords", "210024")
 		keyTag = "anime"
 	}
+	if genreID > 0 {
+		q.Set("with_genres", strconv.Itoa(int(genreID)))
+	}
 	key := "discover/" + keyTag + "?page=" + strconv.Itoa(int(page))
+	if genreID > 0 {
+		key += "&genre=" + strconv.Itoa(int(genreID))
+	}
 	d, err := getCached[tmdbPaginated[tmdbTV]](ctx, c, key, "/discover/tv", q)
 	if err != nil {
 		return nil, err
@@ -294,6 +307,27 @@ func (c *Client) BrowseTV(ctx context.Context, page int32, anime bool) (*relaxv1
 		Page:       d.Page,
 		TotalPages: d.TotalPages,
 	}, nil
+}
+
+// Genres lists the movie or TV genre catalog (/genre/{movie,tv}/list).
+// getCached keeps it in memory since the catalog rarely changes.
+func (c *Client) Genres(ctx context.Context, mediaType relaxv1.MediaType) ([]*relaxv1.Genre, error) {
+	var path string
+	switch mediaType {
+	case relaxv1.MediaType_MEDIA_TYPE_MOVIE:
+		path = "/genre/movie/list"
+	case relaxv1.MediaType_MEDIA_TYPE_TV:
+		path = "/genre/tv/list"
+	default:
+		return nil, fmt.Errorf("unsupported media type: %v", mediaType)
+	}
+	d, err := getCached[struct {
+		Genres []tmdbGenre `json:"genres"`
+	}](ctx, c, "genres"+path, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	return mapGenres(d.Genres), nil
 }
 
 // GetPersonDetail fetches /person/{id}?append_to_response=combined_credits.
