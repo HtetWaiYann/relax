@@ -10,7 +10,9 @@ import {
   Bookmark,
   Check,
   Loader2,
+  ExternalLink,
 } from 'lucide-react';
+import { getExternalLinks } from '../lib/externalLinks';
 import {
   mediaTypeFromRoute,
   useAddToWatchlist,
@@ -30,7 +32,14 @@ export function Detail() {
   const id = Number(params.id);
   const { data, isLoading, error } = useMediaDetail(mediaType, Number.isFinite(id) ? id : 0);
   const navigate = useNavigate();
-  const [watchOpen, setWatchOpen] = useState(false);
+  // Persist the panel's open state so returning from the streaming page (which
+  // unmounts this route) restores it instead of collapsing to closed.
+  const watchOpenKey = `detail-watch-open-${params.id ?? ''}`;
+  const [watchOpen, setWatchOpen] = useState(() => sessionStorage.getItem(watchOpenKey) === '1');
+  const changeWatchOpen = (next: boolean) => {
+    setWatchOpen(next);
+    sessionStorage.setItem(watchOpenKey, next ? '1' : '0');
+  };
   const tmdbIdStr = Number.isFinite(id) ? String(id) : '';
   const watchlistStatus = useIsInWatchlist(tmdbIdStr, mediaType);
   const addToWatchlist = useAddToWatchlist();
@@ -69,6 +78,7 @@ export function Detail() {
   const rating = summary.voteAverage > 0 ? summary.voteAverage.toFixed(1) : null;
   const isTV = params.mediaType === 'tv';
   const watchable = canWatch(summary.releaseDate, detail.status, isTV);
+  const { imdbUrl, letterboxdUrl } = getExternalLinks(detail, mediaType);
 
   return (
     <div className="-mt-8 -mb-8 flex min-h-screen w-screen ml-[calc(50%-50vw)]">
@@ -128,7 +138,7 @@ export function Detail() {
                     {watchable ? (
                       <button
                         type="button"
-                        onClick={() => setWatchOpen((v) => !v)}
+                        onClick={() => changeWatchOpen(!watchOpen)}
                         className="flex cursor-pointer items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
                       >
                         <Play className="h-4 w-4 fill-white" />
@@ -182,6 +192,25 @@ export function Detail() {
                   {detail.overview}
                 </p>
               )}
+
+              {(imdbUrl || letterboxdUrl) && (
+                  <div className="mt-1 flex items-center gap-2">
+                    {imdbUrl && (
+                      <ExternalLinkButton
+                        href={imdbUrl}
+                        label="IMDb"
+                        className="bg-[#f5c518] text-black hover:bg-[#f5c518]/90"
+                      />
+                    )}
+                    {letterboxdUrl && (
+                      <ExternalLinkButton
+                        href={letterboxdUrl}
+                        label="Letterboxd"
+                        className="bg-surface-elevated/80 text-neutral-200 ring-1 ring-border-subtle hover:bg-surface-elevated"
+                      />
+                    )}
+                  </div>
+                )}
             </div>
           </div>
         </div>
@@ -236,12 +265,34 @@ export function Detail() {
 
       <div
         className={`sticky top-14 h-[calc(100vh-3.5rem)] shrink-0 self-start overflow-hidden transition-[width] duration-300 ease-out ${
-          watchOpen ? 'w-[380px]' : 'w-0'
+          watchOpen ? 'w-[460px]' : 'w-0'
         }`}
       >
-        {watchOpen && <WatchSidebar detail={detail} onClose={() => setWatchOpen(false)} />}
+        {watchOpen && <WatchSidebar detail={detail} onClose={() => changeWatchOpen(false)} />}
       </div>
     </div>
+  );
+}
+
+function ExternalLinkButton({
+  href,
+  label,
+  className,
+}: {
+  href: string;
+  label: string;
+  className: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => window.open(href, '_blank')}
+      title={`View on ${label}`}
+      className={`flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${className}`}
+    >
+      {label}
+      <ExternalLink className="h-3 w-3" />
+    </button>
   );
 }
 
