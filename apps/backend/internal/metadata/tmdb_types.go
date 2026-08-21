@@ -76,6 +76,19 @@ type tmdbSeason struct {
 	EpisodeCount int32  `json:"episode_count"`
 }
 
+type tmdbEpisode struct {
+	EpisodeNumber int32  `json:"episode_number"`
+	Name          string `json:"name"`
+	Overview      string `json:"overview"`
+	StillPath     string `json:"still_path"`
+	AirDate       string `json:"air_date"`
+	Runtime       int32  `json:"runtime"`
+}
+
+type tmdbSeasonDetail struct {
+	Episodes []tmdbEpisode `json:"episodes"`
+}
+
 type tmdbMovieDetail struct {
 	ID                  int32                    `json:"id"`
 	Title               string                   `json:"title"`

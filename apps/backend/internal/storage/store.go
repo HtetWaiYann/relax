@@ -66,6 +66,7 @@ type Store interface {
 	Upsert(ctx context.Context, p WatchProgress) error
 	Get(ctx context.Context, mediaID string, mediaType, season, episode int32) (WatchProgress, bool, error)
 	History(ctx context.Context, limit, offset int) ([]WatchProgress, int, error)
+	ListByMedia(ctx context.Context, mediaID string, mediaType int32) ([]WatchProgress, error)
 	Delete(ctx context.Context, mediaID string, mediaType, season, episode int32) error
 	Clear(ctx context.Context) error
 
@@ -216,6 +217,32 @@ func (s *sqliteStore) Get(ctx context.Context, mediaID string, mediaType, season
 		return WatchProgress{}, false, err
 	}
 	return p, true, nil
+}
+
+// ListByMedia returns every row for a title (watched and in-progress),
+// newest first — drives the series episode picker's status + season preselect.
+func (s *sqliteStore) ListByMedia(ctx context.Context, mediaID string, mediaType int32) ([]WatchProgress, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT media_id, media_type, season, episode, title, poster_url,
+		       position_seconds, duration_seconds, last_watched_at,
+		       info_hash, file_idx, magnet_uri
+		FROM watch_progress
+		WHERE media_id = ? AND media_type = ?
+		ORDER BY last_watched_at DESC
+	`, mediaID, mediaType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WatchProgress
+	for rows.Next() {
+		p, err := scanRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 func (s *sqliteStore) History(ctx context.Context, limit, offset int) ([]WatchProgress, int, error) {
