@@ -78,6 +78,15 @@ message SeasonInfo {
   int32 episode_count = 3;
 }
 
+message EpisodeInfo {
+  int32 episode_number = 1;
+  string name = 2;
+  string overview = 3;
+  string still_url = 4;
+  string air_date = 5;
+  int32 runtime_minutes = 6;
+}
+
 message StreamSource {
   string title = 1;
   string quality = 2;
