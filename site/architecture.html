@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Architecture — RELAX</title>
+<meta name="description" content="How RELAX is built: an Electron + Go monorepo joined by a single typed Connect-RPC contract.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg viewBox='-25 -25 250 250' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='200' height='200' rx='40' fill='%230F6E56'/%3E%3Ccircle cx='79' cy='100' r='42' fill='%235DCAA5'/%3E%3Ccircle cx='121' cy='100' r='42' fill='%239FE1CB'/%3E%3C/svg%3E">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    background: #F2EFE6;
+    color: #0F1B17;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.5rem 2.5rem;
+    border-bottom: 1px solid #E2DECF;
+  }
+  .brand { display: flex; align-items: center; gap: 0.65rem; font-weight: 700; font-size: 1.15rem; letter-spacing: -0.01em; text-decoration: none; }
+  .brand svg { width: 36px; height: 36px; }
+  header nav { display: flex; gap: 2rem; font-size: 0.95rem; color: #4A5754; }
+  header nav a { text-decoration: none; }
+  header nav a:hover { color: #0F1B17; }
+
+  .layout {
+    max-width: 64rem;
+    margin: 0 auto;
+    display: flex;
+    align-items: flex-start;
+    gap: 3rem;
+    padding: 3rem 1.5rem 6rem;
+  }
+
+  /* Table of contents */
+  .toc {
+    position: sticky;
+    top: 2rem;
+    flex-shrink: 0;
+    width: 13rem;
+  }
+  .toc-title {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #8A938E;
+    margin: 0 0 0.85rem;
+    padding-left: 0.85rem;
+  }
+  .toc ul { list-style: none; margin: 0; padding: 0; }
+  .toc li { margin: 0; }
+  .toc a {
+    display: block;
+    padding: 0.35rem 0.85rem;
+    font-size: 0.88rem;
+    line-height: 1.35;
+    color: #6B7670;
+    text-decoration: none;
+    border-left: 2px solid #D8D4C6;
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+  .toc a:hover { color: #0F1B17; }
+  .toc a.active {
+    color: #0F6E56;
+    font-weight: 600;
+    border-left-color: #0F6E56;
+  }
+
+  .prose { flex: 1; min-width: 0; max-width: 46rem; line-height: 1.65; font-size: 1.02rem; color: #26312D; }
+  .prose h1 { font-size: clamp(1.9rem, 4vw, 2.6rem); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 1rem; color: #0F1B17; }
+  .prose h2 { font-size: 1.5rem; letter-spacing: -0.01em; margin: 2.5rem 0 0.75rem; color: #0F1B17; scroll-margin-top: 1.5rem; }
+  .prose .lede { color: #5A6660; font-style: italic; font-size: 1.1rem; margin: 0 0 1rem; }
+  .prose p { margin: 0 0 1rem; }
+  .prose a { color: #0F6E56; border-bottom: 1px solid currentColor; text-decoration: none; }
+  .prose a:hover { color: #0A4F3D; }
+  .prose ul, .prose ol { padding-left: 1.4rem; margin: 0 0 1rem; }
+  .prose li { margin: 0.4rem 0; }
+  .prose hr { border: 0; border-top: 1px solid #C9C5B6; margin: 2.5rem 0; }
+  .prose strong { color: #0F1B17; }
+  .prose code {
+    background: #0f1b170d;
+    padding: 0.12rem 0.4rem;
+    border-radius: 5px;
+    font-size: 0.88em;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .prose pre {
+    background: #0F1B17;
+    color: #DDEFE5;
+    padding: 1.1rem 1.25rem;
+    border-radius: 10px;
+    overflow-x: auto;
+    margin: 0 0 1.25rem;
+    line-height: 1.4;
+  }
+  .prose pre code { background: none; padding: 0; font-size: 0.82rem; }
+  .prose .outro { color: #5A6660; font-style: italic; }
+
+  @media (max-width: 900px) {
+    header { padding: 1rem 1.25rem; }
+    header nav { gap: 1.25rem; }
+    .toc { display: none; }
+    .layout { padding-top: 2rem; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <a class="brand" href="/">
+      <svg viewBox="-25 -25 250 250" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect width="200" height="200" rx="40" fill="#0F6E56"/>
+        <circle cx="79" cy="100" r="42" fill="#5DCAA5"/>
+        <circle cx="121" cy="100" r="42" fill="#9FE1CB"/>
+      </svg>
+      RELAX
+    </a>
+    <nav>
+      <a href="/">Home</a>
+      <a href="https://github.com/HtetWaiYann/relax" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </header>
+
+  <div class="layout">
+    <aside class="toc">
+      <p class="toc-title">On this page</p>
+      <nav>
+        <ul>
+          <li><a href="#one-liner">The one-liner</a></li>
+          <li><a href="#shape">The shape of the system</a></li>
+          <li><a href="#contract">The big idea</a></li>
+          <li><a href="#security">Security by default</a></li>
+          <li><a href="#backend">The backend</a></li>
+          <li><a href="#build">The build</a></li>
+          <li><a href="#why">Why build it this way?</a></li>
+          <li><a href="#about">About this project</a></li>
+        </ul>
+      </nav>
+    </aside>
+
+    <article class="prose">
+      <h1>Building a Desktop Torrent‑Streaming App the Boring Way</h1>
+      <p class="lede">A look at the architecture behind RELAX: a desktop app that streams movies from torrents, built as an Electron + Go monorepo joined by a single typed contract.</p>
+
+      <hr>
+
+      <h2 id="one-liner">The one‑liner</h2>
+      <p>RELAX is a desktop streaming app for movie geeks. You search a title, it finds a torrent, and it streams the video directly to a player — no full download, no waiting. Under the hood it's two very different runtimes (a Chromium UI and a Go server) held together by one idea: <strong>the contract is the source of truth.</strong></p>
+
+      <hr>
+
+      <h2 id="shape">The shape of the system</h2>
+      <p>Three moving parts, one rulebook between them.</p>
+      <pre><code>┌─────────────────┐        Connect-RPC          ┌──────────────────┐
+│  Electron app   │  ───────(typed)───────────▶ │   Go backend     │
+│  (Chromium UI)  │ ◀──────  over H2C  ─────────│   (relaxd)       │
+└─────────────────┘                             └──────────────────┘
+        ▲                                               │
+        │                                               ▼
+   window.relax bridge                        torrent · metadata · storage
+   (locked-down IPC)                          (TMDB, torrent engine, DB)</code></pre>
+      <ul>
+        <li><strong>Electron renderer</strong> — the UI. A locked-down Chromium window that never touches Node directly.</li>
+        <li><strong>Go backend (<code>relaxd</code>)</strong> — does the real work: talks to torrents, fetches metadata, streams bytes.</li>
+        <li><strong>The <code>/proto</code> contract</strong> — the wire format and the RPC list, defined once and generated into both languages.</li>
+      </ul>
+      <p>It's a <strong>pnpm + Turborepo monorepo</strong>, so all of this lives in one repo and builds with one command.</p>
+
+      <hr>
+
+      <h2 id="contract">The big idea: the contract generates both sides</h2>
+      <p>Most bugs at a client/server boundary are shape mismatches — the frontend expects <code>position_seconds</code>, the backend sends <code>position_ms</code>, and you find out at runtime. RELAX makes that impossible by design.</p>
+      <p>Every request, response, and RPC lives in <code>.proto</code> files. A tool called <strong>buf</strong> reads them and generates:</p>
+      <ul>
+        <li><strong>Go types + server interfaces</strong> for the backend</li>
+        <li><strong>TypeScript types + a typed client</strong> for the frontend</li>
+      </ul>
+      <p>Change the contract, run one command, and <em>both</em> sides update. If the frontend uses a field that no longer exists, it fails to compile — not in production, on a user's machine, at the worst possible moment.</p>
+      <p>A deliberate choice worth calling out: <strong>the generated code is never committed.</strong> It's regenerated on every build and in every CI job. The <code>.proto</code> files are the truth; everything else is a build artifact. There's nothing to drift.</p>
+      <p>The transport is <strong>Connect-RPC over H2C</strong> (HTTP/2 without TLS on localhost), which lets the browser-based renderer speak to the Go server using a standard web transport — no exotic networking, no gRPC-in-the-browser gymnastics.</p>
+
+      <hr>
+
+      <h2 id="security">Security by default, not as an afterthought</h2>
+      <p>Streaming from torrents means running untrusted content on a desktop. The Electron layer is locked down on purpose:</p>
+      <ul>
+        <li><strong>Context isolation on, Node integration off, sandbox on.</strong> The UI is treated like a web page that can't be trusted with your filesystem.</li>
+        <li><strong>A strict Content-Security-Policy</strong> is injected on every response, so the renderer can only load what it's supposed to.</li>
+        <li><strong>A narrow bridge (<code>window.relax</code>)</strong> is the <em>only</em> way the UI reaches anything Node-side. It's a short, explicit list of allowed operations — not a door to the whole system.</li>
+      </ul>
+      <p>On the backend:</p>
+      <ul>
+        <li><strong>A single-origin CORS allowlist</strong> rejects any request that isn't from the app itself — with a 403, <em>before</em> it ever reaches a handler.</li>
+        <li><strong>Every input is validated</strong> through shared helpers, so no RPC trusts its caller.</li>
+      </ul>
+      <p>The principle throughout: the UI is powerful but caged, and every trust boundary is enforced in one obvious place.</p>
+
+      <hr>
+
+      <h2 id="backend">The backend: interfaces first, real engines behind them</h2>
+      <p>The Go server is organized around three internal capabilities:</p>
+      <ul>
+        <li><strong>torrent</strong> — finding and streaming the actual video</li>
+        <li><strong>metadata</strong> — posters, titles, series info (from TMDB)</li>
+        <li><strong>storage</strong> — remembering what you watched and where you left off</li>
+      </ul>
+      <p>Each is an <strong>interface</strong>. Real implementations slot in behind them without the rest of the app knowing or caring. This keeps the server honest: handlers depend on <em>what</em> a thing does, not <em>how</em> it does it, so the torrent engine or the database can be swapped without a rewrite.</p>
+      <p><strong>Config is entirely env-driven</strong> — no hardcoded values anywhere. Every knob, from the allowed origin to API keys, comes from environment variables with sane defaults. That's what makes the same binary run identically on a laptop and in a Docker container.</p>
+
+      <hr>
+
+      <h2 id="build">The build: one graph, no surprises</h2>
+      <p>Turborepo models the whole repo as a <strong>task graph</strong>. The proto-generation step sits at the root, and <code>test</code>, <code>build</code>, and <code>dev</code> all depend on it. So when a <code>.proto</code> file changes, the code regenerates <em>automatically</em> before anything else runs. You can't accidentally test against a stale contract.</p>
+      <p>CI mirrors this exactly: <strong>seven parallel jobs</strong> — lint, frontend tests, backend tests (with the race detector), two build jobs, a Go linter, and a Docker image build. Every job regenerates the contract from scratch, because there's no generated code to trust in the repo. The build <em>is</em> the verification.</p>
+
+      <hr>
+
+      <h2 id="why">Why build it this way?</h2>
+      <p>A few principles ran through every decision:</p>
+      <ol>
+        <li><strong>One source of truth beats two copies that agree by luck.</strong> The <code>.proto</code> contract removes an entire category of bugs.</li>
+        <li><strong>Boundaries should be boring and enforced in one place</strong> — CORS, CSP, the IPC bridge, input validation. Security you can point at.</li>
+        <li><strong>Interfaces over implementations</strong>, so the interesting parts (torrent engine, TMDB client, database) can evolve independently.</li>
+        <li><strong>The build regenerates everything</strong>, so "works on my machine" and "works in CI" are the same statement.</li>
+      </ol>
+      <p>None of this is exotic. That's the point. The architecture is deliberately unremarkable so the <em>product</em> — instant, no-wait movie streaming — can be the interesting part.</p>
+
+      <hr>
+
+      <h2 id="about">About this project</h2>
+      <p>A candid note. RELAX is a <strong>personal project, built for my own use</strong> — not a product, not something I expect anyone else to run. It exists mostly as an excuse to design a real cross-runtime desktop app end to end.</p>
+      <p>It was built with <a href="https://claude.com/claude-code" target="_blank" rel="noopener">Claude Code</a>, Anthropic's agentic coding tool. That's the honest workflow, and exploring how far that workflow goes is part of the point.</p>
+      <p>So set expectations accordingly: <strong>the architecture is what I care about here</strong> — the contract-first boundary, the locked-down Electron layer, the interface-driven backend. The implementation behind it is <em>messy</em> in plenty of places. I optimized for getting the shape right and for learning, not for code you'd hold up as exemplary. If you're reading the source, read it for the structure, not the polish.</p>
+    </article>
+  </div>
+
+  <script>
+    // Scroll-spy: highlight the TOC entry for the section nearest the top.
+    const links = new Map(
+      [...document.querySelectorAll('.toc a')].map((a) => [a.getAttribute('href').slice(1), a]),
+    );
+    const setActive = (id) => {
+      links.forEach((a) => a.classList.remove('active'));
+      links.get(id)?.classList.add('active');
+    };
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const hit = entries.find((e) => e.isIntersecting);
+        if (hit) setActive(hit.target.id);
+      },
+      // Active band sits just below the header, in the top fifth of the viewport.
+      { rootMargin: '-10% 0px -80% 0px', threshold: 0 },
+    );
+    document.querySelectorAll('.prose h2[id]').forEach((h) => observer.observe(h));
+    setActive([...links.keys()][0]); // default before the first scroll
+  </script>
+</body>
+</html>
