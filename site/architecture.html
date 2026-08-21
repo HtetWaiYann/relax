@@ -242,24 +242,38 @@
   </div>
 
   <script>
-    // Scroll-spy: highlight the TOC entry for the section nearest the top.
+    // Scroll-spy: highlight the TOC entry for the last heading scrolled past.
+    // ponytail: scroll-position over IntersectionObserver so the short final
+    // section still activates at the bottom of the page (its heading never
+    // reaches an observer band). OFFSET = header + breathing room.
+    const OFFSET = 96;
     const links = new Map(
       [...document.querySelectorAll('.toc a')].map((a) => [a.getAttribute('href').slice(1), a]),
     );
+    const headings = [...document.querySelectorAll('.prose h2[id]')];
+
     const setActive = (id) => {
       links.forEach((a) => a.classList.remove('active'));
       links.get(id)?.classList.add('active');
+      if (id && location.hash.slice(1) !== id) history.replaceState(null, '', '#' + id);
     };
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const hit = entries.find((e) => e.isIntersecting);
-        if (hit) setActive(hit.target.id);
-      },
-      // Active band sits just below the header, in the top fifth of the viewport.
-      { rootMargin: '-10% 0px -80% 0px', threshold: 0 },
-    );
-    document.querySelectorAll('.prose h2[id]').forEach((h) => observer.observe(h));
-    setActive([...links.keys()][0]); // default before the first scroll
+
+    const onScroll = () => {
+      // At the bottom of the page the last section can't reach the top — pin it.
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) {
+        setActive(headings[headings.length - 1].id);
+        return;
+      }
+      let current = headings[0].id;
+      for (const h of headings) {
+        if (h.getBoundingClientRect().top > OFFSET) break;
+        current = h.id;
+      }
+      setActive(current);
+    };
+
+    document.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
   </script>
 </body>
 </html>
