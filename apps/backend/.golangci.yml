@@ -1,18 +1,24 @@
+version: "2"
+
 run:
   timeout: 3m
-  tests: true
 
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
-    - gofmt
     - gosec
     - govet
     - ineffassign
     - staticcheck
     - unused
+  exclusions:
+    paths:
+      - gen
 
-issues:
-  exclude-dirs:
-    - gen
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    paths:
+      - gen

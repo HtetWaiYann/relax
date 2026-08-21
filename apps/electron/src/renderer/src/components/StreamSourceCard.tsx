@@ -12,9 +12,7 @@ export function StreamSourceCard({ stream, onSelect }: StreamSourceCardProps) {
   const quality = stream.quality || '—';
   const sizeLabel = stream.sizeBytes > 0 ? formatBytes(Number(stream.sizeBytes)) : '';
   const seeders = stream.seeders > 0 ? stream.seeders : null;
-  const sourceParts = (stream.sourceName || '').split(' - ');
   const codec = pickCodec(stream.title);
-  const tracker = sourceParts.length > 1 ? sourceParts[sourceParts.length - 1] : '';
 
   return (
     <article className="space-y-2 rounded-xl bg-surface-elevated/70 px-4 py-3 ring-1 ring-border-subtle/60 transition hover:bg-surface-elevated">
@@ -23,15 +21,14 @@ export function StreamSourceCard({ stream, onSelect }: StreamSourceCardProps) {
           <span className="rounded-md bg-accent px-2 py-0.5 font-semibold text-surface">
             {quality}
           </span>
-          {/* {codec && <span className="font-medium text-neutral-300">{codec}</span>}
-          {tracker && <span className="text-neutral-400">{tracker}</span>} */}
+          {codec && <span className="font-medium text-neutral-400">{codec}</span>}
         </div>
         {sizeLabel && (
           <span className="text-xs font-medium text-neutral-300">{sizeLabel}</span>
         )}
       </header>
 
-      <p className="line-clamp-3 text-xs break-all text-neutral-500" title={stream.title}>
+      <p className="line-clamp-3 text-xs break-words text-neutral-500" title={stream.title}>
         {stream.title}
       </p>
 

@@ -45,7 +45,7 @@ export function Detail() {
       <div className="space-y-10">
         <DetailHeroSkeleton />
         <HorizontalRowSkeleton label="Cast" />
-        <HorizontalRowSkeleton label="Similar movies" />
+        <HorizontalRowSkeleton label={params.mediaType === 'tv' ? 'Similar series' : 'Similar movies'} />
       </div>
     );
   }
@@ -79,13 +79,14 @@ export function Detail() {
               src={summary.backdropUrl}
               alt=""
               aria-hidden
+              onError={(e) => (e.currentTarget.style.display = 'none')}
               className="absolute inset-0 h-full w-full object-cover"
             />
           )}
           <div className="absolute inset-0 bg-gradient-to-t from-surface via-surface/70 to-surface/10" />
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={() => (window.history.length > 1 ? navigate(-1) : navigate('/'))}
             className="absolute left-4 top-4 z-10 flex cursor-pointer items-center gap-1.5 rounded-md bg-black/40 px-3 py-2 text-sm text-white backdrop-blur-sm transition hover:bg-black/60"
           >
             <ChevronLeft className="h-4 w-4" />
@@ -99,6 +100,7 @@ export function Detail() {
               <img
                 src={summary.posterUrl}
                 alt={summary.title}
+                onError={(e) => (e.currentTarget.style.display = 'none')}
                 className="z-1 hidden h-64 w-44 shrink-0 rounded-xl object-cover shadow-2xl ring-1 ring-border-subtle md:block"
               />
             ) : (
@@ -193,7 +195,7 @@ export function Detail() {
                   <Link
                     key={c.id}
                     to={`/person/${c.id}`}
-                    className="group flex items-center gap-3 rounded-xl bg-surface-elevated/50 px-3 py-2.5 ring-1 ring-border-subtle/60 transition hover:bg-surface-elevated"
+                    className="group flex items-center gap-3 rounded-xl bg-surface-elevated/50 px-3 py-2.5 ring-1 ring-border-subtle/60 transition hover:bg-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
                   >
                     <div className="h-11 w-11 shrink-0 overflow-hidden rounded-full bg-surface-muted ring-1 ring-border-subtle">
                       {c.profileUrl ? (
@@ -201,6 +203,7 @@ export function Detail() {
                           src={c.profileUrl}
                           alt={c.name}
                           loading="lazy"
+                          onError={(e) => (e.currentTarget.style.display = 'none')}
                           className="h-full w-full object-cover"
                         />
                       ) : (
@@ -222,7 +225,7 @@ export function Detail() {
           )}
 
           {detail.similar.length > 0 && (
-            <HorizontalRow label="Similar movies">
+            <HorizontalRow label={isTV ? 'Similar series' : 'Similar movies'}>
               {detail.similar.map((item) => (
                 <PosterCard key={`${item.mediaType}-${item.tmdbId}`} item={item} />
               ))}

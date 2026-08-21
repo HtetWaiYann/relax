@@ -84,6 +84,7 @@ export interface AudioTrack {
 const api = {
   getBackendUrl: (): string => BACKEND_URL,
   getAppName: (): string => 'Relax',
+  restartApp: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),
   torrent: {
     start: (args: StartStreamArgs): Promise<StartStreamResult> =>
       ipcRenderer.invoke('torrent:start', args),

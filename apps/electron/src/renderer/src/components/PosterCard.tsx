@@ -16,7 +16,7 @@ export function PosterCard({ item, showTypeBadge = false }: PosterCardProps) {
   return (
     <Link
       to={`/title/${route}/${item.tmdbId}`}
-      className="group flex w-[170px] shrink-0 flex-col gap-2 sm:w-[180px]"
+      className="group flex w-[170px] shrink-0 flex-col gap-2 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 sm:w-[180px]"
     >
       <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-surface-elevated ring-1 ring-border-subtle transition">
         {item.posterUrl ? (
@@ -24,6 +24,7 @@ export function PosterCard({ item, showTypeBadge = false }: PosterCardProps) {
             src={item.posterUrl}
             alt={item.title}
             loading="lazy"
+            onError={(e) => (e.currentTarget.style.display = 'none')}
             className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
           />
         ) : (

@@ -17,12 +17,12 @@ const SECTION_LABELS = [
 ];
 
 export function Home() {
-  const { data, isLoading, error } = useHomeSections();
+  const { data, isLoading, error, refetch } = useHomeSections();
   const history = useWatchHistory(20);
   const historyItems = history.data?.items ?? [];
 
   if (error) {
-    return <ErrorBlock message={error.message} />;
+    return <ErrorBlock onRefresh={() => refetch()} />;
   }
 
   if (isLoading || !data) {
@@ -59,15 +59,27 @@ export function Home() {
   );
 }
 
-function ErrorBlock({ message }: { message: string }) {
+function ErrorBlock({ onRefresh }: { onRefresh: () => void }) {
   return (
-    <div className="rounded-xl border border-red-900/60 bg-red-950/40 p-6 text-red-200">
-      <h2 className="text-lg font-semibold">Couldn't load metadata</h2>
-      <p className="mt-2 text-sm">{message}</p>
-      <p className="mt-3 text-xs text-red-300/70">
-        Make sure <code className="rounded bg-black/30 px-1">TMDB_API_KEY</code> is set in{' '}
-        <code className="rounded bg-black/30 px-1">apps/backend/.env</code> and the backend is running.
+    <div className="p-6 text-red-200 mx-auto flex items-center flex-col space-y-4">
+      <h2 className="text-lg font-semibold">Something went wrong</h2>
+      <p className="mt-2 text-sm text-red-300/80">
+        We couldn't load your movies and shows. Please try again.
       </p>
+      <div className="mt-4 flex gap-3">
+        <button
+          onClick={onRefresh}
+          className="cursor-pointer rounded-lg bg-red-200 px-4 py-2 text-sm font-medium text-red-950 hover:bg-red-100"
+        >
+          Refresh
+        </button>
+        {/* <button
+          onClick={() => window.relax?.restartApp()}
+          className="cursor-pointer rounded-lg border border-red-800 px-4 py-2 text-sm font-medium text-red-200 hover:bg-red-900/40"
+        >
+          Restart app
+        </button> */}
+      </div>
     </div>
   );
 }

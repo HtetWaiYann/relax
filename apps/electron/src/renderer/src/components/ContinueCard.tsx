@@ -49,7 +49,7 @@ export function ContinueCard({ item }: { item: WatchProgress }) {
     >
       <div className="relative cursor-zoom-in aspect-[2/3] overflow-hidden rounded-xl bg-surface-elevated ring-1 ring-border-subtle transition">
         {item.posterUrl ? (
-          <img src={item.posterUrl} alt={item.title} className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" />
+          <img src={item.posterUrl} alt={item.title} onError={(e) => (e.currentTarget.style.display = 'none')} className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-xs text-neutral-500">No poster</div>
         )}
