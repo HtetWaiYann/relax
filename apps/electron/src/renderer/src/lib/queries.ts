@@ -112,6 +112,27 @@ export function useWatchHistory(limit = 20) {
   });
 }
 
+export function useSeriesProgress(tmdbId: number, mediaType: MediaType) {
+  return useQuery({
+    queryKey: ['series-progress', tmdbId],
+    queryFn: () =>
+      relaxClient.getSeriesProgress({ mediaId: String(tmdbId), mediaType }),
+    enabled: tmdbId > 0 && mediaType === MediaType.TV,
+    // Local SQLite read — refetch whenever the panel remounts so it reflects
+    // progress just saved on the streaming page (nothing invalidates it).
+    staleTime: 0,
+  });
+}
+
+export function useSeasonEpisodes(tmdbId: number, season: number) {
+  return useQuery({
+    queryKey: ['season-episodes', tmdbId, season],
+    queryFn: () => relaxClient.getSeasonEpisodes({ tmdbId, season }),
+    enabled: tmdbId > 0 && season > 0,
+    staleTime: 10 * 60_000,
+  });
+}
+
 export function useDeleteWatchProgress() {
   const qc = useQueryClient();
   return useMutation({
