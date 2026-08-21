@@ -99,7 +99,7 @@ export function Settings() {
               {stats.entries.map((e) => (
                 <li key={e.infoHash || e.torrentName} className="flex items-center gap-3 px-4 py-3">
                   <div className="h-12 w-9 shrink-0 overflow-hidden rounded bg-black/40">
-                    {e.posterUrl && <img src={e.posterUrl} alt="" className="h-full w-full object-cover" />}
+                    {e.posterUrl && <img src={e.posterUrl} alt="" onError={(ev) => (ev.currentTarget.style.display = 'none')} className="h-full w-full object-cover" />}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm text-neutral-100" title={e.title}>{e.title}</div>
@@ -166,9 +166,14 @@ export function Settings() {
             value={ttlDays}
             onChange={async (e) => {
               const v = Number(e.target.value);
+              const prev = ttlDays;
               setTtlDays(v);
-              await setCacheTtlDays(v);
-              await refresh();
+              try {
+                await setCacheTtlDays(v);
+                await refresh();
+              } catch {
+                setTtlDays(prev); // ponytail: revert on failure; no toast system here
+              }
             }}
             className="cursor-pointer rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-primary"
           >
@@ -251,9 +256,22 @@ function Modal({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-md space-y-4 rounded-xl border border-white/10 bg-surface-elevated p-5">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-md space-y-4 rounded-xl border border-white/10 bg-surface-elevated p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
         <h3 className="text-base font-semibold text-neutral-100">{title}</h3>
         <p className="text-sm text-neutral-300">{body}</p>
         <div className="flex justify-end gap-2">

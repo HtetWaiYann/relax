@@ -24,6 +24,7 @@ export function FeaturedHero({ detail }: FeaturedHeroProps) {
           src={summary.backdropUrl}
           alt=""
           aria-hidden
+          onError={(e) => (e.currentTarget.style.display = 'none')}
           className="absolute inset-0 h-full w-full object-cover"
         />
       )}

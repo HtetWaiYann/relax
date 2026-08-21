@@ -29,7 +29,7 @@ export function Person() {
       <section className="flex flex-col gap-8 md:flex-row md:items-start">
         <div className="h-72 w-48 shrink-0 overflow-hidden rounded-xl bg-surface-elevated ring-1 ring-border-subtle">
           {p.profileUrl ? (
-            <img src={p.profileUrl} alt={p.name} className="h-full w-full object-cover" />
+            <img src={p.profileUrl} alt={p.name} onError={(e) => (e.currentTarget.style.display = 'none')} className="h-full w-full object-cover" />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-3xl text-neutral-600">
               {p.name.slice(0, 1)}
@@ -88,7 +88,7 @@ export function Person() {
                 <Link
                   key={`${route}-${c.tmdbId}-${i}`}
                   to={`/title/${route}/${c.tmdbId}`}
-                  className="group flex flex-col gap-2"
+                  className="group flex flex-col gap-2 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
                 >
                   <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-surface-elevated ring-1 ring-border-subtle">
                     {c.posterUrl ? (
@@ -96,6 +96,7 @@ export function Person() {
                         src={c.posterUrl}
                         alt={c.title}
                         loading="lazy"
+                        onError={(e) => (e.currentTarget.style.display = 'none')}
                         className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
                       />
                     ) : (

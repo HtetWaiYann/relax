@@ -41,6 +41,13 @@ export function Watch() {
   useEffect(() => { setPickerOpen(false); }, [params.infoHash]);
 
   useEffect(() => {
+    if (!pickerOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPickerOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pickerOpen]);
+
+  useEffect(() => {
     if (!state || state.infoHash !== params.infoHash) return;
     let cancelled = false;
     void startStream({

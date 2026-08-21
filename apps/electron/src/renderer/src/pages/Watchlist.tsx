@@ -91,6 +91,9 @@ export function Watchlist() {
       {isFetchingNextPage && (
         <div className="py-4 text-center text-xs text-neutral-500">Loading more…</div>
       )}
+      {!hasNextPage && !isLoading && items.length > 0 && (
+        <p className="pt-2 text-center text-sm text-neutral-500">You've reached the end.</p>
+      )}
     </div>
   );
 }
@@ -200,6 +203,7 @@ function WatchlistGridCard({ item, onRemove }: { item: WatchlistItem; onRemove: 
               src={item.posterUrl}
               alt={item.title}
               loading="lazy"
+              onError={(e) => (e.currentTarget.style.display = 'none')}
               className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
             />
           ) : (
@@ -251,9 +255,9 @@ function WatchlistList({ items }: { items: WatchlistItem[] }) {
               className="block h-24 w-40 shrink-0 overflow-hidden rounded-lg bg-black/40"
             >
               {it.backdropUrl ? (
-                <img src={it.backdropUrl} alt={it.title} className="h-full w-full object-cover" />
+                <img src={it.backdropUrl} alt={it.title} onError={(e) => (e.currentTarget.style.display = 'none')} className="h-full w-full object-cover" />
               ) : it.posterUrl ? (
-                <img src={it.posterUrl} alt={it.title} className="h-full w-full object-cover" />
+                <img src={it.posterUrl} alt={it.title} onError={(e) => (e.currentTarget.style.display = 'none')} className="h-full w-full object-cover" />
               ) : null}
             </Link>
             <div className="min-w-0 flex-1">

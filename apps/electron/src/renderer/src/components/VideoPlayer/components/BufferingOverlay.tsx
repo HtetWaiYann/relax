@@ -26,6 +26,14 @@ export function BufferingOverlay({
   const downloadSpeedBps = stats?.downloadSpeedBps ?? 0;
   const durationSec = stats?.durationSeconds ?? 0;
 
+  // ponytail: surface a "still trying" hint if buffering drags on, so a dead
+  // torrent doesn't leave the user staring at a silent spinner.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), 25_000);
+    return () => clearTimeout(t);
+  }, []);
+
   // ponytail: ETA from observed buffer velocity since first non-zero sample.
   // Linear projection — good enough for a transient UI hint. Swap for a
   // smoothed estimate if it visibly jitters.
@@ -122,6 +130,13 @@ export function BufferingOverlay({
               : 'Connecting to peers…'}
           </p>
         </div>
+
+        {slow && downloadSpeedBps <= 0 && (
+          <p className="max-w-xs text-xs text-amber-400/90">
+            Taking longer than usual — this source may have too few seeders. You
+            can keep waiting or go back and try another stream.
+          </p>
+        )}
 
         {/* <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
           <div

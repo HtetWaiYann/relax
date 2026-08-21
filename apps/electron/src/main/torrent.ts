@@ -3,7 +3,7 @@
 // <video> element. Provider-agnostic on the surface — a future debrid
 // provider can satisfy the same start/stop/stats/subtitles contract.
 
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import {
   mkdirSync,
   existsSync,
@@ -960,7 +960,7 @@ async function handleMkvSubtitle(
   });
 }
 
-export function startStreamServer() {
+export function startStreamServer(): Server {
   if (streamServer) return streamServer;
   const server = createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
