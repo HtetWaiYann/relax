@@ -56,15 +56,33 @@ export function useMediaDetail(mediaType: MediaType, tmdbId: number) {
 
 export type BrowseKind = 'movies' | 'series' | 'anime';
 
-export function useInfiniteBrowseMedia(kind: BrowseKind) {
-  const mediaType = kind === 'movies' ? MediaType.MOVIE : MediaType.TV;
+function browseMediaType(kind: BrowseKind): MediaType {
+  return kind === 'movies' ? MediaType.MOVIE : MediaType.TV;
+}
+
+// genreId 0 = no filter. Passed through to TMDB's with_genres on every page.
+export function useInfiniteBrowseMedia(kind: BrowseKind, genreId = 0) {
+  const mediaType = browseMediaType(kind);
   const anime = kind === 'anime';
   return useInfiniteQuery({
-    queryKey: [BROWSE_PREFIX, kind],
-    queryFn: ({ pageParam }) => relaxClient.browseMedia({ mediaType, anime, page: pageParam }),
+    queryKey: [BROWSE_PREFIX, kind, genreId],
+    queryFn: ({ pageParam, signal }) =>
+      relaxClient.browseMedia({ mediaType, anime, page: pageParam, genreId }, { signal }),
     initialPageParam: 1,
     getNextPageParam: nextPage,
     staleTime: 5 * 60_000,
+  });
+}
+
+// Genre catalog rarely changes; cache effectively forever so it isn't refetched
+// on remount. Movie and TV IDs differ, so key by media type.
+export function useGenres(kind: BrowseKind) {
+  const mediaType = browseMediaType(kind);
+  return useQuery({
+    queryKey: ['genres', mediaType],
+    queryFn: () => relaxClient.getGenres({ mediaType }),
+    staleTime: Infinity,
+    gcTime: Infinity,
   });
 }
 
