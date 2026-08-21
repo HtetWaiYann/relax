@@ -168,11 +168,23 @@ export function useVideoPlayback({
         const dur = effectiveDuration || v.duration;
         if (!finishedRef.current && abs / dur >= 0.9) {
           finishedRef.current = true;
-          void relaxClient.deleteWatchProgress({
-            mediaId: String(tmdbId),
-            mediaType,
-            season,
-            episode,
+          // Mark watched (position = duration) instead of deleting — keeps a ✓
+          // record for the episode picker. Ratio 1.0 stays out of Continue
+          // Watching (backend hides rows past FinishedRatio = 0.97).
+          void relaxClient.upsertWatchProgress({
+            progress: {
+              mediaId: String(tmdbId),
+              mediaType,
+              title,
+              posterUrl: posterUrl ?? '',
+              season,
+              episode,
+              positionSeconds: dur,
+              durationSeconds: dur,
+              infoHash,
+              fileIdx,
+              magnetUri,
+            },
           }).catch(() => {});
           // Tell the engine to wipe the cached files on stop (next navigate-back).
           void markCacheFinished(infoHash);
@@ -196,13 +208,37 @@ export function useVideoPlayback({
       }
     };
     const onEnded = () => {
-      if (tmdbId > 0) {
-        void relaxClient.deleteWatchProgress({
-          mediaId: String(tmdbId),
-          mediaType,
-          season,
-          episode,
+      // TEMP DIAGNOSTIC: distinguish a real end from a premature remux-pipe
+      // close. If displayTime is far below effectiveDuration, ffmpeg died early
+      // and this `ended` is spurious (we're wrongly marking the title watched).
+      console.warn('[video] ENDED event', {
+        currentTime: v.currentTime,
+        localDuration: v.duration,
+        seekOffsetSeconds,
+        displayTime: v.currentTime + seekOffsetSeconds,
+        effectiveDuration,
+        bufferedEnd: v.buffered.length ? v.buffered.end(v.buffered.length - 1) : 0,
+        needsRemux,
+      });
+      if (tmdbId > 0 && magnetUri) {
+        finishedRef.current = true;
+        const dur = effectiveDuration || v.duration;
+        void relaxClient.upsertWatchProgress({
+          progress: {
+            mediaId: String(tmdbId),
+            mediaType,
+            title,
+            posterUrl: posterUrl ?? '',
+            season,
+            episode,
+            positionSeconds: dur,
+            durationSeconds: dur,
+            infoHash,
+            fileIdx,
+            magnetUri,
+          },
         }).catch(() => {});
+        void markCacheFinished(infoHash);
       }
     };
     const onDuration = () => setDuration(v.duration || 0);

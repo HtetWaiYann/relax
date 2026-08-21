@@ -53,6 +53,11 @@ export function ContinueCard({ item }: { item: WatchProgress }) {
         ) : (
           <div className="flex h-full w-full items-center justify-center text-xs text-neutral-500">No poster</div>
         )}
+        {isTV && (
+          <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold text-white backdrop-blur-sm">
+            S{item.season} · E{item.episode}
+          </div>
+        )}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-0 transition group-hover:opacity-100" />
         <button
           type="button"

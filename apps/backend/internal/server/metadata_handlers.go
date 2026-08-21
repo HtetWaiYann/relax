@@ -117,6 +117,23 @@ func (s *RelaxServer) GetPersonDetail(
 	return connect.NewResponse(&relaxv1.GetPersonDetailResponse{Detail: detail}), nil
 }
 
+func (s *RelaxServer) GetSeasonEpisodes(
+	ctx context.Context,
+	req *connect.Request[relaxv1.GetSeasonEpisodesRequest],
+) (*connect.Response[relaxv1.GetSeasonEpisodesResponse], error) {
+	if req.Msg.GetTmdbId() <= 0 {
+		return nil, invalidArg("tmdb_id must be positive")
+	}
+	if req.Msg.GetSeason() <= 0 {
+		return nil, invalidArg("season must be positive")
+	}
+	episodes, err := s.meta.GetSeasonEpisodes(ctx, req.Msg.GetTmdbId(), req.Msg.GetSeason())
+	if err != nil {
+		return nil, s.tmdbError("GetSeasonEpisodes", err)
+	}
+	return connect.NewResponse(&relaxv1.GetSeasonEpisodesResponse{Episodes: episodes}), nil
+}
+
 // tmdbError maps a TMDB APIError to a Connect code without leaking the
 // upstream body to the renderer. Server log keeps the raw status for ops.
 func (s *RelaxServer) tmdbError(op string, err error) error {

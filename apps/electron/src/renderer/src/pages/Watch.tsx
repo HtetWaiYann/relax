@@ -129,7 +129,7 @@ export function Watch() {
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => setPickerOpen(false)}
           />
-          <div className="absolute right-0 top-0 h-full w-[400px] bg-surface-elevated shadow-2xl">
+          <div className="absolute right-0 top-0 h-full w-[460px] bg-surface-elevated shadow-2xl">
             {detail ? (
               <WatchSidebar detail={detail} onClose={() => setPickerOpen(false)} />
             ) : (

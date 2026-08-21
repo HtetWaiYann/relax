@@ -142,15 +142,19 @@ export function pickDefaultAudio(probe: ProbeResult | null): ProbeStream | null 
 // stream, output Matroska on stdout. Seek with -ss before -i for fast input
 // seeking (no full-file decode).
 export function spawnRemux(opts: {
-  filePath: string;
+  input: string;            // seekable HTTP URL served by the piece-aware store
   audioTypeIdx: number;     // 0-based among audio streams (-> -map 0:a:N)
   startSeconds: number;
   transcodeAudio: boolean;
 }) {
   const args: string[] = ['-hide_banner', '-loglevel', 'warning'];
+  // Read the source over our local HTTP endpoint, which blocks on pieces that
+  // aren't downloaded yet instead of returning zero-fill. -reconnect keeps
+  // ffmpeg alive if a slow read window trips a transient socket close.
+  args.push('-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
   if (opts.startSeconds > 0) args.push('-ss', opts.startSeconds.toFixed(3));
   args.push(
-    '-i', opts.filePath,
+    '-i', opts.input,
     '-map', '0:v:0',
     '-map', `0:a:${opts.audioTypeIdx}?`,
     '-c:v', 'copy',

@@ -753,6 +753,57 @@ async function readFileToBuffer(file: FileLike): Promise<Buffer> {
   });
 }
 
+// Serve raw file bytes through webtorrent's piece-aware read stream, which
+// waits for pieces to download instead of returning zero-fill. Honors Range so
+// ffmpeg (and Chromium) can seek. This is the only safe way to feed the remux
+// ffmpeg — reading the file path off disk hands it zeroed gaps.
+function serveBytes(
+  req: IncomingMessage,
+  res: ServerResponse,
+  file: FileLike,
+  contentType: string,
+) {
+  const size = file.length;
+  const range = parseRange(req.headers.range, size);
+  if (!range) {
+    res.writeHead(200, {
+      'Content-Length': size,
+      'Content-Type': contentType,
+      'Accept-Ranges': 'bytes',
+    });
+    const stream = file.createReadStream();
+    stream.pipe(res);
+    req.on('close', () => stream.destroy());
+    return;
+  }
+  res.writeHead(206, {
+    'Content-Range': `bytes ${range.start}-${range.end}/${size}`,
+    'Accept-Ranges': 'bytes',
+    'Content-Length': range.end - range.start + 1,
+    'Content-Type': contentType,
+  });
+  const stream = file.createReadStream({ start: range.start, end: range.end });
+  stream.pipe(res);
+  req.on('close', () => stream.destroy());
+}
+
+// Raw bytes, no remux decision — ffmpeg's input for the remux pipe.
+async function handleRaw(
+  req: IncomingMessage,
+  res: ServerResponse,
+  infoHash: string,
+  fileIdx: number,
+) {
+  const t = await getTorrent(infoHash);
+  const file = t ? fileFor(t, fileIdx) : null;
+  if (!file) {
+    res.writeHead(404);
+    res.end('not found');
+    return;
+  }
+  serveBytes(req, res, file, mime.lookup(file.name) || 'video/mp4');
+}
+
 async function handleStream(
   req: IncomingMessage,
   res: ServerResponse,
@@ -799,29 +850,7 @@ async function handleStream(
     `mode=${remux ? 'remux' : 'passthrough'} audio=${sess?.selectedAudioTypeIdx ?? 0}`,
   );
 
-  if (!remux) {
-    if (!range) {
-      res.writeHead(200, {
-        'Content-Length': size,
-        'Content-Type': contentType,
-        'Accept-Ranges': 'bytes',
-      });
-      const stream = file.createReadStream();
-      stream.pipe(res);
-      req.on('close', () => stream.destroy());
-      return;
-    }
-    res.writeHead(206, {
-      'Content-Range': `bytes ${range.start}-${range.end}/${size}`,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': range.end - range.start + 1,
-      'Content-Type': contentType,
-    });
-    const stream = file.createReadStream({ start: range.start, end: range.end });
-    stream.pipe(res);
-    req.on('close', () => stream.destroy());
-    return;
-  }
+  if (!remux) return serveBytes(req, res, file, contentType);
 
   // Remux path. Two ways the renderer can ask for a seek:
   //   1) ?t={seconds} — explicit time offset (used by the UI's seek-bar swap)
@@ -860,7 +889,10 @@ async function handleStream(
   });
 
   const ff = spawnRemux({
-    filePath: sess!.filePath,
+    // Read through the piece-aware HTTP endpoint (blocks on missing pieces)
+    // rather than the raw disk file (returns zero-fill → corrupt NAL units →
+    // VideoToolbox decode crash when ffmpeg outruns the download).
+    input: `http://localhost:${STREAM_PORT}/raw/${infoHash}/${fileIdx}`,
     audioTypeIdx: sess?.selectedAudioTypeIdx ?? 0,
     startSeconds,
     transcodeAudio,
@@ -874,6 +906,15 @@ async function handleStream(
   const kill = () => { try { ff.kill('SIGKILL'); } catch { /* noop */ } };
   req.on('close', kill);
   ff.on('error', (err) => { console.warn('[ffmpeg] spawn failed', err); kill(); });
+  // TEMP DIAGNOSTIC: a non-zero exit while the client is still connected means
+  // the pipe closed early (e.g. zero-filled pieces at the seek point) — the
+  // renderer will see this as a spurious `ended`.
+  ff.on('close', (code, signal) => {
+    console.warn(
+      `[ffmpeg] remux exit start=${startSeconds.toFixed(1)}s code=${code} ` +
+      `signal=${signal} clientStillOpen=${!res.writableEnded}`,
+    );
+  });
 }
 
 async function handleSubtitle(res: ServerResponse, infoHash: string, fileIdx: number) {
@@ -972,7 +1013,12 @@ export function startStreamServer(): Server {
       return;
     }
     const url = req.url || '';
-    let m = /^\/stream\/([a-f0-9]+)\/(\d+)/i.exec(url);
+    let m = /^\/raw\/([a-f0-9]+)\/(\d+)/i.exec(url);
+    if (m) {
+      void handleRaw(req, res, m[1].toLowerCase(), parseInt(m[2], 10));
+      return;
+    }
+    m = /^\/stream\/([a-f0-9]+)\/(\d+)/i.exec(url);
     if (m) {
       void handleStream(req, res, m[1].toLowerCase(), parseInt(m[2], 10));
       return;

@@ -200,6 +200,27 @@ func (c *Client) GetTVDetail(ctx context.Context, id int32) (*relaxv1.MediaDetai
 	return tvDetailToProto(d), nil
 }
 
+// GetSeasonEpisodes fetches /tv/{id}/season/{season} and maps its episodes.
+func (c *Client) GetSeasonEpisodes(ctx context.Context, tmdbID, season int32) ([]*relaxv1.EpisodeInfo, error) {
+	path := "/tv/" + strconv.Itoa(int(tmdbID)) + "/season/" + strconv.Itoa(int(season))
+	d, err := getCached[tmdbSeasonDetail](ctx, c, path, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*relaxv1.EpisodeInfo, 0, len(d.Episodes))
+	for _, e := range d.Episodes {
+		out = append(out, &relaxv1.EpisodeInfo{
+			EpisodeNumber:  e.EpisodeNumber,
+			Name:           e.Name,
+			Overview:       e.Overview,
+			StillUrl:       stillURL(e.StillPath),
+			AirDate:        e.AirDate,
+			RuntimeMinutes: e.Runtime,
+		})
+	}
+	return out, nil
+}
+
 // IMDBID resolves an IMDB id from a TMDB id. Hits the cached detail call.
 func (c *Client) IMDBID(ctx context.Context, mediaType relaxv1.MediaType, tmdbID int32) (string, error) {
 	switch mediaType {

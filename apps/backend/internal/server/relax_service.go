@@ -222,6 +222,24 @@ func (s *RelaxServer) GetWatchHistory(
 	return connect.NewResponse(&relaxv1.GetWatchHistoryResponse{Items: items, TotalCount: int32(total)}), nil
 }
 
+func (s *RelaxServer) GetSeriesProgress(
+	ctx context.Context,
+	req *connect.Request[relaxv1.GetSeriesProgressRequest],
+) (*connect.Response[relaxv1.GetSeriesProgressResponse], error) {
+	if err := requireNonEmpty("media_id", req.Msg.GetMediaId()); err != nil {
+		return nil, err
+	}
+	rows, err := s.store.ListByMedia(ctx, req.Msg.GetMediaId(), int32(req.Msg.GetMediaType()))
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	items := make([]*relaxv1.WatchProgress, len(rows))
+	for i, r := range rows {
+		items[i] = toProto(r)
+	}
+	return connect.NewResponse(&relaxv1.GetSeriesProgressResponse{Items: items}), nil
+}
+
 func (s *RelaxServer) DeleteWatchProgress(
 	ctx context.Context,
 	req *connect.Request[relaxv1.DeleteWatchProgressRequest],
