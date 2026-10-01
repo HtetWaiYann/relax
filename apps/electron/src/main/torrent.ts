@@ -107,10 +107,17 @@ interface Session {
   fileIdx: number;
   filePath: string;
   initialDownloaded: number;
+  // Head + tail bytes the prebuffer drains (denominator for initialDownloaded).
+  prebufferTotal: number;
   bufferingComplete: boolean;
+  // Resolves once the file's tail is on disk (or failed to download).
+  tailReady: Promise<void>;
   statsTimer?: NodeJS.Timeout;
   probe: ProbeResult | null;
   probePromise?: Promise<void>;
+  // Probe failed with the full prebuffer on disk — the file is genuinely
+  // unprobeable; don't spawn ffprobe again on every stream request.
+  probeFailed: boolean;
   selectedAudioTypeIdx: number;
   // Cache: subtitle typeIdx -> extracted VTT text.
   mkvSubCache: Map<number, string>;
@@ -255,63 +262,95 @@ function absoluteFilePath(torrent: TorrentLike, file: FileLike): string {
 // it in series with the full prebuffer drain was the main cause of the
 // extra "initial buffering" wall time after this commit landed.
 const PROBE_TRIGGER_BYTES = 2 * 1024 * 1024;
+// MP4s with the moov atom at the end, and MKV seek cues, live in the tail.
+// Chromium/ffprobe need them before playback can start, so fetch the tail in
+// parallel with the head instead of after it.
+const TAIL_BYTES = 2 * 1024 * 1024;
 function primeInitialBuffer(file: FileLike, sess: Session, onUpdate: () => void) {
-  const end = Math.min(INITIAL_BUFFER_BYTES, file.length) - 1;
-  const stream = file.createReadStream({ start: 0, end });
+  const headEnd = Math.min(INITIAL_BUFFER_BYTES, file.length);
+  const tailStart = Math.max(headEnd, file.length - TAIL_BYTES);
+  sess.prebufferTotal = headEnd + (file.length - tailStart);
+  let headBytes = 0;
   let probeKicked = false;
-  const kickProbe = () => {
-    if (probeKicked) return;
-    probeKicked = true;
+  const head = drainRange(file, 0, headEnd, (n) => {
+    sess.initialDownloaded += n;
+    headBytes += n;
+    onUpdate();
+    if (!probeKicked && headBytes >= PROBE_TRIGGER_BYTES) {
+      probeKicked = true;
+      void ensureProbe(sess);
+    }
+  });
+  sess.tailReady = drainRange(file, tailStart, file.length, (n) => {
+    sess.initialDownloaded += n;
+    onUpdate();
+  });
+  void Promise.all([head, sess.tailReady]).then(() => {
+    sess.bufferingComplete = true;
+    onUpdate();
+    // Also the retry for a probe that failed on a too-short head (e.g. MKV
+    // with large font attachments up front).
     void ensureProbe(sess);
-  };
-  stream.on('data', (chunk: Buffer) => {
-    sess.initialDownloaded += chunk.length;
-    onUpdate();
-    if (sess.initialDownloaded >= PROBE_TRIGGER_BYTES) kickProbe();
   });
-  stream.on('end', () => {
-    sess.bufferingComplete = true;
-    onUpdate();
-    kickProbe();
-  });
-  stream.on('error', (err: Error) => {
-    console.warn('[torrent] prebuffer error', err);
-    sess.bufferingComplete = true;
-    onUpdate();
-    kickProbe();
+}
+
+// Read [start, end) through webtorrent's piece-aware stream (waits for
+// pieces instead of zero-fill) and discard it. Best-effort: resolves on error.
+function drainRange(
+  file: FileLike,
+  start: number,
+  end: number,
+  onData: (bytes: number) => void = () => undefined,
+): Promise<void> {
+  if (end <= start) return Promise.resolve();
+  return new Promise((resolve) => {
+    const s = file.createReadStream({ start, end: end - 1 });
+    s.on('data', (c: Buffer) => onData(c.length));
+    s.on('end', () => resolve());
+    s.on('error', (err: Error) => {
+      console.warn('[torrent] prebuffer error', err);
+      resolve();
+    });
   });
 }
 
 async function ensureProbe(sess: Session): Promise<void> {
-  if (sess.probe || sess.probePromise) {
-    if (sess.probePromise) await sess.probePromise;
-    return;
-  }
+  if (sess.probe || sess.probeFailed) return;
+  if (sess.probePromise) return sess.probePromise;
   sess.probePromise = (async () => {
+    // ffprobe reads the file on disk, where undownloaded ranges are zeros —
+    // wait for the tail so MP4 moov / MKV cues are real.
+    await sess.tailReady;
     if (!existsSync(sess.filePath)) {
       console.warn('[ffmpeg] probe skipped — file path missing', sess.filePath);
       return;
     }
+    const fullPrebuffer = sess.bufferingComplete;
     const probe = await probeFile(sess.filePath);
+    if (!probe) {
+      // Before the prebuffer finished the head may just be too short; retry
+      // then. After it, give up rather than re-spawn per request.
+      if (fullPrebuffer) sess.probeFailed = true;
+      return;
+    }
     sess.probe = probe;
     const def = pickDefaultAudio(probe);
     if (def) sess.selectedAudioTypeIdx = def.typeIndex;
-    if (probe) {
-      const audio = audioStreams(probe);
-      const needsTranscode = audio.some((a) => audioNeedsTranscode(a.codecName));
-      console.log(
-        `[ffmpeg] probe ${sess.filePath} — duration=${probe.durationSeconds.toFixed(0)}s ` +
-        `audio=[${audio.map((a) => `${a.codecName}/${a.language || '?'}`).join(',')}] ` +
-        `transcode=${needsTranscode}`,
-      );
-    }
+    const audio = audioStreams(probe);
+    const needsTranscode = audio.some((a) => audioNeedsTranscode(a.codecName));
+    console.log(
+      `[ffmpeg] probe ${sess.filePath} — duration=${probe.durationSeconds.toFixed(0)}s ` +
+      `audio=[${audio.map((a) => `${a.codecName}/${a.language || '?'}`).join(',')}] ` +
+      `transcode=${needsTranscode}`,
+    );
   })();
   try { await sess.probePromise; } finally { sess.probePromise = undefined; }
 }
 
 function buildStats(torrent: TorrentLike, sess: Session): Stats {
-  const totalNeeded = Math.min(INITIAL_BUFFER_BYTES, fileFor(torrent, sess.fileIdx)?.length ?? 0);
-  const initial = totalNeeded > 0 ? Math.min(1, sess.initialDownloaded / totalNeeded) : 1;
+  const initial = sess.prebufferTotal > 0
+    ? Math.min(1, sess.initialDownloaded / sess.prebufferTotal)
+    : 1;
   const audios = audioStreams(sess.probe);
   const selectedAudio = audios.find((a) => a.typeIndex === sess.selectedAudioTypeIdx);
   const containerDefault = audios.find((a) => a.isDefault) ?? audios[0];
@@ -376,8 +415,11 @@ async function start(args: StartArgs): Promise<StartResult> {
       fileIdx,
       filePath: absoluteFilePath(torrent, file),
       initialDownloaded: 0,
+      prebufferTotal: 0,
       bufferingComplete: false,
+      tailReady: Promise.resolve(),
       probe: null,
+      probeFailed: false,
       selectedAudioTypeIdx: 0,
       mkvSubCache: new Map(),
     };
@@ -892,13 +934,7 @@ async function handleStream(
   if (startSeconds > 0 && duration > 0 && size > 0) {
     const byte = Math.floor((startSeconds / duration) * size);
     const PREBUFFER = 4 * 1024 * 1024;
-    const end = Math.min(size - 1, byte + PREBUFFER - 1);
-    await new Promise<void>((resolve) => {
-      const s = file.createReadStream({ start: byte, end });
-      s.on('data', () => { /* drain */ });
-      s.on('end', () => resolve());
-      s.on('error', () => resolve());
-    });
+    await drainRange(file, byte, Math.min(size, byte + PREBUFFER));
   }
 
   res.writeHead(200, {
