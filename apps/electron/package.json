@@ -11,7 +11,6 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "dist": "electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
-    "dist:all": "electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false sh -c 'electron-builder --mac --arm64 && electron-builder --mac --x64 && electron-builder --linux && electron-builder --win'",
     "lint": "eslint src --max-warnings=0 || true",
     "test": "echo \"no tests yet\" && exit 0",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
@@ -65,7 +64,7 @@
     ],
     "mac": {
       "target": [
-        { "target": "dmg", "arch": ["arm64", "x64"] }
+        { "target": "dmg", "arch": ["arm64"] }
       ],
       "icon": "resources/icon.icns",
       "category": "public.app-category.entertainment"

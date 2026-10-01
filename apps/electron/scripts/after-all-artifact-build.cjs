@@ -1,7 +1,7 @@
 /* eslint-env node */
 // electron-builder afterAllArtifactBuild hook: re-fetch the node-datachannel
 // prebuild for the host platform/arch, so `pnpm dev` keeps working after a
-// cross-arch pack (e.g. dist:all) overwrote the host binary in node_modules.
+// pack for another platform/arch overwrote the host binary in node_modules.
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
