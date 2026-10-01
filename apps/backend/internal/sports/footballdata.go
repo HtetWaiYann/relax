@@ -20,8 +20,10 @@ import (
 
 const (
 	footballDataBaseURL = "https://api.football-data.org/v4"
-	fixturesTTL         = 60 * time.Second
-	httpTimeout         = 10 * time.Second
+	// Ranges containing "now" may have live scores; other days barely change.
+	liveTTL     = 30 * time.Second
+	settledTTL  = 10 * time.Minute
+	httpTimeout = 10 * time.Second
 )
 
 // ErrNoAPIKey is returned when FOOTBALL_DATA_API_KEY is unset.
@@ -77,7 +79,7 @@ type fdMatch struct {
 }
 
 // Between returns matches kicking off in [start, end). The free tier allows
-// 10 req/min, so results are cached per range for a minute.
+// 10 req/min, so results are cached per range (see liveTTL / settledTTL).
 func (f *Fixtures) Between(ctx context.Context, start, end time.Time) ([]*relaxv1.Match, error) {
 	if f.apiKey == "" {
 		return nil, ErrNoAPIKey
@@ -89,8 +91,12 @@ func (f *Fixtures) Between(ctx context.Context, start, end time.Time) ([]*relaxv
 	to := end.UTC().AddDate(0, 0, 1).Format(time.DateOnly)
 	key := from + "/" + to
 
+	ttl := settledTTL
+	if now := time.Now(); !now.Before(start) && now.Before(end) {
+		ttl = liveTTL
+	}
 	f.mu.Lock()
-	if e, ok := f.cache[key]; ok && time.Since(e.at) < fixturesTTL {
+	if e, ok := f.cache[key]; ok && time.Since(e.at) < ttl {
 		f.mu.Unlock()
 		return filterRange(e.matches, start, end), nil
 	}
@@ -109,7 +115,9 @@ func (f *Fixtures) Between(ctx context.Context, start, end time.Time) ([]*relaxv
 	}
 
 	f.mu.Lock()
-	f.cache = map[string]fixturesEntry{key: {at: time.Now(), matches: matches}} // ponytail: one range cached, it's always "today"
+	// ponytail: unbounded, one entry per day browsed this session; add LRU
+	// eviction if someone scrolls through whole seasons.
+	f.cache[key] = fixturesEntry{at: time.Now(), matches: matches}
 	f.mu.Unlock()
 	return filterRange(matches, start, end), nil
 }
