@@ -1,6 +1,8 @@
-import { Link } from 'react-router-dom';
+import { useRef } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { CalendarDays, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { MatchStatus, type Match, type Team } from '@relax/types';
-import { useTodayMatches } from '../lib/queries';
+import { useMatchesOn } from '../lib/queries';
 
 const STATUS_ORDER: Record<MatchStatus, number> = {
   [MatchStatus.LIVE]: 0,
@@ -49,8 +51,112 @@ export function Crest({ team, className }: { team?: Team; className: string }) {
   );
 }
 
+const DAY_MS = 86_400_000;
+const STRIP_RADIUS = 3; // days shown either side of the selected one
+
+const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+// Local YYYY-MM-DD (toISOString would shift to UTC).
+const toKey = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const fromKey = (k: string | null) => {
+  const m = k?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : startOfDay(new Date());
+};
+
+function relativeLabel(day: Date): string | null {
+  const diff = Math.round((day.getTime() - startOfDay(new Date()).getTime()) / DAY_MS);
+  return diff === 0 ? 'Today' : diff === -1 ? 'Yesterday' : diff === 1 ? 'Tomorrow' : null;
+}
+
+function DateStrip({ value, onChange }: { value: Date; onChange: (d: Date) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const today = startOfDay(new Date());
+  const days = Array.from({ length: STRIP_RADIUS * 2 + 1 }, (_, i) =>
+    addDays(value, i - STRIP_RADIUS),
+  );
+  const arrow =
+    'grid h-14 w-8 shrink-0 place-items-center rounded-lg text-neutral-400 transition hover:bg-white/10 hover:text-neutral-100';
+
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        onClick={() => onChange(addDays(value, -1))}
+        aria-label="Previous day"
+        className={arrow}
+      >
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+      <div className="grid flex-1 grid-cols-7 gap-1">
+        {days.map((d) => {
+          const selected = d.getTime() === value.getTime();
+          const isToday = d.getTime() === today.getTime();
+          return (
+            <button
+              key={toKey(d)}
+              type="button"
+              onClick={() => onChange(d)}
+              aria-pressed={selected}
+              className={[
+                'relative flex h-14 flex-col items-center justify-center rounded-lg text-xs transition',
+                selected
+                  ? 'bg-accent text-surface'
+                  : 'text-neutral-400 hover:bg-white/10 hover:text-neutral-100',
+              ].join(' ')}
+            >
+              <span className="font-medium">
+                {relativeLabel(d) ?? d.toLocaleDateString([], { weekday: 'short' })}
+              </span>
+              <span className={selected ? 'font-semibold' : 'text-neutral-500'}>
+                {d.toLocaleDateString([], { day: 'numeric', month: 'short' })}
+              </span>
+              {isToday && !selected && (
+                <span className="absolute bottom-1 h-1 w-1 rounded-full bg-accent" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange(addDays(value, 1))}
+        aria-label="Next day"
+        className={arrow}
+      >
+        <ChevronRight className="h-4 w-4" />
+      </button>
+      {/* Native picker for jumping further than the strip; the input stays invisible. */}
+      <button
+        type="button"
+        onClick={() => inputRef.current?.showPicker()}
+        aria-label="Pick a date"
+        title="Pick a date"
+        className={`${arrow} relative w-10`}
+      >
+        <CalendarDays className="h-4 w-4" />
+        <input
+          ref={inputRef}
+          type="date"
+          tabIndex={-1}
+          aria-hidden
+          value={toKey(value)}
+          onChange={(e) => e.target.value && onChange(fromKey(e.target.value))}
+          className="pointer-events-none absolute inset-0 opacity-0"
+        />
+      </button>
+    </div>
+  );
+}
+
 export function Sports() {
-  const { data, isLoading, error } = useTodayMatches();
+  const [params, setParams] = useSearchParams();
+  const day = fromKey(params.get('date'));
+  const isToday = relativeLabel(day) === 'Today';
+  const setDay = (d: Date) =>
+    setParams(relativeLabel(d) === 'Today' ? {} : { date: toKey(d) }, { replace: true });
+  const { data, isLoading, error, refetch, isFetching, isPlaceholderData, dataUpdatedAt } =
+    useMatchesOn(day);
 
   const matches = [...(data?.matches ?? [])].sort(
     (a, b) =>
@@ -65,13 +171,53 @@ export function Sports() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold text-neutral-100">Sports</h1>
-        <p className="mt-1 text-sm text-neutral-400">
-          Today's matches ·{' '}
-          {new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })}
-        </p>
+      <header className="flex items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-neutral-100">Sports</h1>
+          <p className="mt-1 text-sm text-neutral-400">
+            {relativeLabel(day) ? `${relativeLabel(day)} · ` : ''}
+            {day.toLocaleDateString([], {
+              weekday: 'long',
+              day: 'numeric',
+              month: 'long',
+              year: 'numeric',
+            })}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {!isToday && (
+            <button
+              type="button"
+              onClick={() => setDay(startOfDay(new Date()))}
+              className="rounded-full px-3 py-1.5 text-sm font-medium text-neutral-300 ring-1 ring-border-subtle transition hover:text-neutral-100"
+            >
+              Today
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+            title={
+              dataUpdatedAt ? `Updated ${new Date(dataUpdatedAt).toLocaleTimeString()}` : undefined
+            }
+            className="inline-flex items-center gap-2 rounded-full bg-white/5 px-3 py-1.5 text-sm font-medium text-neutral-200 ring-1 ring-border-subtle transition hover:bg-white/10 disabled:opacity-60"
+          >
+            <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
+            Refresh
+            {dataUpdatedAt > 0 && (
+              <span className="text-xs font-normal text-neutral-500 tabular-nums">
+                {new Date(dataUpdatedAt).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </span>
+            )}
+          </button>
+        </div>
       </header>
+
+      <DateStrip value={day} onChange={setDay} />
 
       {isLoading ? (
         <div className="space-y-2">
@@ -85,30 +231,37 @@ export function Sports() {
         </p>
       ) : groups.size === 0 ? (
         <p className="rounded-xl bg-surface-elevated/70 px-4 py-6 text-sm text-neutral-400 ring-1 ring-border-subtle/60">
-          No matches today.
+          No matches{' '}
+          {isToday
+            ? 'today'
+            : `on ${day.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })}`}
+          .
         </p>
       ) : (
-        [...groups].map(([competition, list]) => (
-          <section key={competition} className="space-y-2">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-neutral-300">
-              {list[0]?.competition?.emblemUrl && (
-                <img
-                  src={list[0].competition.emblemUrl}
-                  alt=""
-                  className="h-5 w-5 object-contain"
-                />
-              )}
-              {competition}
-            </h2>
-            <ul className="divide-y divide-border-subtle/40 overflow-hidden rounded-xl bg-surface-elevated/70 ring-1 ring-border-subtle/60">
-              {list.map((m) => (
-                <li key={m.id}>
-                  <MatchRow match={m} />
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))
+        // Previous day stays visible (dimmed) while the newly picked one loads.
+        <div className={`space-y-6 transition-opacity ${isPlaceholderData ? 'opacity-40' : ''}`}>
+          {[...groups].map(([competition, list]) => (
+            <section key={competition} className="space-y-2">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-neutral-300">
+                {list[0]?.competition?.emblemUrl && (
+                  <img
+                    src={list[0].competition.emblemUrl}
+                    alt=""
+                    className="h-5 w-5 object-contain"
+                  />
+                )}
+                {competition}
+              </h2>
+              <ul className="divide-y divide-border-subtle/40 overflow-hidden rounded-xl bg-surface-elevated/70 ring-1 ring-border-subtle/60">
+                {list.map((m) => (
+                  <li key={m.id}>
+                    <MatchRow match={m} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
       )}
     </div>
   );

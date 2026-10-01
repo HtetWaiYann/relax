@@ -115,17 +115,19 @@ export function useStreams(
 const isLive = (s: MatchStatus) => s === MatchStatus.LIVE || s === MatchStatus.PAUSED;
 const ts = (d: Date) => ({ seconds: BigInt(Math.floor(d.getTime() / 1000)), nanos: 0 });
 
-// "Today" in the user's local timezone; refreshes every minute while a match is live.
-export function useTodayMatches() {
-  const start = new Date();
+// Matches kicking off on `day` in the user's local timezone. Auto-refreshes
+// every minute while a match is live.
+export function useMatchesOn(day: Date) {
+  const start = new Date(day);
   start.setHours(0, 0, 0, 0);
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
   return useQuery({
-    queryKey: ['sports', 'today', start.toDateString()],
+    queryKey: ['sports', 'day', start.toDateString()],
     queryFn: () => relaxClient.getTodayMatches({ dayStart: ts(start), dayEnd: ts(end) }),
     refetchInterval: (q) =>
       q.state.data?.matches.some((m) => isLive(m.status)) ? 60_000 : false,
+    placeholderData: (prev) => prev, // keep the old day on screen while the next loads
     retry: false,
   });
 }
