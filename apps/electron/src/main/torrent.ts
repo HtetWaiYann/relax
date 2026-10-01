@@ -905,7 +905,8 @@ async function handleStream(
   const tMatch = /[?&]t=([0-9.]+)/.exec(req.url ?? '');
   const explicitStartSeconds = tMatch ? Math.max(0, parseFloat(tMatch[1])) : null;
 
-  console.log(
+  // Per-request (each Chromium seek / range) — dev only.
+  if (!app.isPackaged) console.log(
     `[stream] ${req.method} ${req.url} range=${req.headers.range ?? 'none'} ` +
     `mode=${remux ? 'remux' : 'passthrough'} audio=${sess?.selectedAudioTypeIdx ?? 0}`,
   );
@@ -960,10 +961,10 @@ async function handleStream(
   const kill = () => { try { ff.kill('SIGKILL'); } catch { /* noop */ } };
   req.on('close', kill);
   ff.on('error', (err) => { console.warn('[ffmpeg] spawn failed', err); kill(); });
-  // TEMP DIAGNOSTIC: a non-zero exit while the client is still connected means
-  // the pipe closed early (e.g. zero-filled pieces at the seek point) — the
-  // renderer will see this as a spurious `ended`.
+  // A non-zero exit we didn't cause (we SIGKILL on client close / seek) means
+  // the pipe died early — the renderer sees a spurious `ended` and restarts.
   ff.on('close', (code, signal) => {
+    if (code === 0 || signal === 'SIGKILL') return;
     console.warn(
       `[ffmpeg] remux exit start=${startSeconds.toFixed(1)}s code=${code} ` +
       `signal=${signal} clientStillOpen=${!res.writableEnded}`,

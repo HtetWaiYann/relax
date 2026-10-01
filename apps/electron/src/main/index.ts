@@ -101,9 +101,13 @@ function createWindow() {
   win.webContents.on('render-process-gone', (_event, details) => {
     console.error('[electron] render-process-gone', details);
   });
-  win.webContents.on('console-message', (_event, _level, message, line, sourceId) => {
-    console.log(`[renderer] ${sourceId}:${line} ${message}`);
-  });
+  // Dev convenience: mirror renderer logs into the terminal. Packaged builds
+  // have no terminal, so don't pay for it there.
+  if (isDev) {
+    win.webContents.on('console-message', (_event, _level, message, line, sourceId) => {
+      console.log(`[renderer] ${sourceId}:${line} ${message}`);
+    });
+  }
 
   win.once('ready-to-show', () => {
     win.show();

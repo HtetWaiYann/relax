@@ -263,19 +263,6 @@ export function useVideoPlayback({
       setReBuffering(false);
       setAudioSwitching(false);
       decodeRetryRef.current = 0;
-      // ponytail: chromium-only counters. If audioBytesDecoded stays 0 while
-      // videoBytesDecoded climbs, the audio codec isn't being decoded (likely
-      // EAC3/DTS/TrueHD passthrough). Swap to a probed track or enable remux.
-      const ext = v as HTMLVideoElement & {
-        webkitAudioDecodedByteCount?: number;
-        webkitVideoDecodedByteCount?: number;
-      };
-      console.info('[audio] canplay', {
-        muted: v.muted,
-        volume: v.volume,
-        audioBytesDecoded: ext.webkitAudioDecodedByteCount ?? 0,
-        videoBytesDecoded: ext.webkitVideoDecodedByteCount ?? 0,
-      });
     };
     const onVolume = () => {
       setVolume(v.volume);
@@ -284,20 +271,6 @@ export function useVideoPlayback({
     const onRate = () => setRate(v.playbackRate);
     const onMeta = () => {
       setDuration(v.duration || 0);
-      const ext = v as HTMLVideoElement & {
-        webkitAudioDecodedByteCount?: number;
-        webkitVideoDecodedByteCount?: number;
-        audioTracks?: { length: number };
-      };
-      console.info('[audio] loadedmetadata', {
-        src: v.currentSrc,
-        duration: v.duration,
-        muted: v.muted,
-        volume: v.volume,
-        elementAudioTrackCount: ext.audioTracks?.length ?? 0,
-        audioBytesDecoded: ext.webkitAudioDecodedByteCount ?? 0,
-        videoBytesDecoded: ext.webkitVideoDecodedByteCount ?? 0,
-      });
       // Decode-retry path: restore the failed timestamp before play resumes.
       if (retrySeekRef.current !== null) {
         try { v.currentTime = retrySeekRef.current; } catch { /* noop */ }
@@ -317,10 +290,7 @@ export function useVideoPlayback({
       }
       // After a src swap (audio change / remux seek), keep playing.
       if (v.paused) {
-        // TEMP DIAGNOSTIC
-        v.play()
-          .then(() => console.info('[video] play() after meta OK'))
-          .catch((e) => console.warn('[video] play() after meta REJECTED', e?.name, e?.message));
+        v.play().catch((e) => console.warn('[video] play() after meta rejected', e?.name, e?.message));
       }
     };
     const onError = () => {
