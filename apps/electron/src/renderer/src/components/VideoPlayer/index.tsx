@@ -31,6 +31,7 @@ import { SpeedPanel } from './components/SpeedPanel';
 import { StatsPanel } from './components/StatsPanel';
 import { SubtitlesPanel } from './components/SubtitlesPanel';
 import { VolumeControl } from './components/VolumeControl';
+import { useAudioFx } from './hooks/useAudioFx';
 import { useAudioTracks } from './hooks/useAudioTracks';
 import { useAutoHideControls } from './hooks/useAutoHideControls';
 import { useFullscreen } from './hooks/useFullscreen';
@@ -188,6 +189,11 @@ export function VideoPlayer(props: VideoPlayerProps) {
     showToast,
   });
 
+  const { boost, night, setBoost, setNight } = useAudioFx(
+    videoRef,
+    !!streamUrl && initialBufferReady,
+  );
+
   useMediaSession({
     videoRef,
     title,
@@ -218,6 +224,10 @@ export function VideoPlayer(props: VideoPlayerProps) {
       {streamUrl && initialBufferReady ? (
         <video
           ref={videoRef}
+          // Lets Web Audio read the stream for volume boost / night mode
+          // (silence otherwise); the stream server sends ACAO: *. Before src
+          // so it's in place when the load starts.
+          crossOrigin="anonymous"
           src={streamUrl}
           className="h-full w-full bg-black"
           autoPlay
@@ -358,6 +368,10 @@ export function VideoPlayer(props: VideoPlayerProps) {
         <SpeedPanel
           rate={rate}
           onSetRate={(r) => setPlaybackRate(r)}
+          boost={boost}
+          onSetBoost={setBoost}
+          night={night}
+          onSetNight={setNight}
           onClose={() => setPanel('none')}
         />
       )}
