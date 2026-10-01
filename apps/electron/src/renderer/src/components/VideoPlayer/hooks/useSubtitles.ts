@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { ConnectError, Code } from '@connectrpc/connect';
 import { type MediaType } from '@relax/types';
 import {
@@ -8,6 +8,7 @@ import {
   srtToVtt,
   useParsedVtt,
   type SubtitleStyle,
+  type VttCue,
 } from '../../../lib/subtitle';
 import { getStreamSubtitles, type SubtitleTrack } from '../../../lib/torrent';
 import { relaxClient } from '../../../lib/client';
@@ -25,7 +26,8 @@ export function useSubtitles({
   mediaType,
   season,
   episode,
-  displayTime,
+  videoRef,
+  seekOffsetSeconds,
   showToast,
   setPanel,
 }: {
@@ -37,7 +39,8 @@ export function useSubtitles({
   mediaType: MediaType;
   season: number;
   episode: number;
-  displayTime: number;
+  videoRef: RefObject<HTMLVideoElement | null>;
+  seekOffsetSeconds: number;
   showToast: (msg: string) => void;
   setPanel: (p: PanelKind) => void;
 }) {
@@ -55,11 +58,32 @@ export function useSubtitles({
   const cues = useParsedVtt(activeTrackUrl);
   // Match cues against the true source-file position. In remux mode the
   // <video> element's currentTime is pipe-local (resets to 0 after a seek),
-  // so displayTime (= currentTime + seekOffsetSeconds) is the correct clock.
-  const activeCue = useMemo(
-    () => activeCueAt(cues, displayTime - subOffsetMs / 1000),
-    [cues, displayTime, subOffsetMs],
-  );
+  // so add seekOffsetSeconds. Resolved per video frame — timeupdate only
+  // fires ~4 Hz, which showed/hid cues up to ~250ms late. seeked/timeupdate
+  // cover the paused case (no frames are presented while paused).
+  const [activeCue, setActiveCue] = useState<VttCue | null>(null);
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || cues.length === 0) {
+      setActiveCue(null);
+      return;
+    }
+    let last: VttCue | null | undefined;
+    const update = () => {
+      const c = activeCueAt(cues, v.currentTime + seekOffsetSeconds - subOffsetMs / 1000);
+      if (c !== last) { last = c; setActiveCue(c); }
+    };
+    let frameId = 0;
+    const onFrame = () => { update(); frameId = v.requestVideoFrameCallback(onFrame); };
+    onFrame();
+    v.addEventListener('seeked', update);
+    v.addEventListener('timeupdate', update);
+    return () => {
+      v.cancelVideoFrameCallback(frameId);
+      v.removeEventListener('seeked', update);
+      v.removeEventListener('timeupdate', update);
+    };
+  }, [videoRef, cues, seekOffsetSeconds, subOffsetMs]);
 
   // Reset offset when the user picks a different track — calibration is per-track.
   useEffect(() => {

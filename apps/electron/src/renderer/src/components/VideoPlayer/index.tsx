@@ -121,7 +121,8 @@ export function VideoPlayer(props: VideoPlayerProps) {
     mediaType,
     season,
     episode,
-    displayTime,
+    videoRef,
+    seekOffsetSeconds,
     showToast,
     setPanel,
   });
