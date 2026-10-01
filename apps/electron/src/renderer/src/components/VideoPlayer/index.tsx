@@ -43,7 +43,7 @@ import { useWheelVolume } from './hooks/useWheelVolume';
 export function VideoPlayer(props: VideoPlayerProps) {
   const {
     infoHash, fileIdx, streamUrl: initialStreamUrl, title, subtitle, quality, sourceLabel,
-    tmdbId, mediaType, season, episode, resumeSeconds, magnetUri, posterUrl, onBack,
+    tmdbId, mediaType, season, episode, resumeSeconds, magnetUri, posterUrl, onBack, headerAction,
   } = props;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -277,6 +277,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
             </span>
           )}
         </div>
+        {headerAction && <div className="pointer-events-auto">{headerAction}</div>}
       </header>
 
       {(reBuffering || audioSwitching) && initialBufferReady && (
