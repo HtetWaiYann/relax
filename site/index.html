@@ -3,9 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RELAX — Stream movies, beautifully | Open-source desktop torrent streaming</title>
-<meta name="description" content="RELAX is a free, open-source desktop app for streaming movies and series over torrents. No ads, no subscriptions, no account. macOS and Windows.">
-<meta name="keywords" content="RELAX, torrent streaming, movie streaming, desktop torrent player, open source streaming, electron torrent app, stream movies free">
+<title>RELAX — Free, open-source torrent streaming app for Mac</title>
+<meta name="description" content="RELAX is a free, open-source desktop app for streaming movies and series over torrents. No ads, no subscriptions, no account. For Macs with Apple Silicon.">
 <meta name="author" content="Htet Wai Yan">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#0F6E56">
@@ -14,15 +13,23 @@
 
 <!-- Open Graph -->
 <meta property="og:type" content="website">
-<meta property="og:title" content="RELAX — Stream movies, beautifully.">
-<meta property="og:description" content="Free, open-source desktop torrent streaming for movies and series. No ads, no subscriptions.">
-<meta property="og:url" content="https://relax.htetwaiyan.com/">
 <meta property="og:site_name" content="RELAX">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://relax.htetwaiyan.com/">
+<meta property="og:title" content="RELAX — Stream movies, beautifully.">
+<meta property="og:description" content="Free, open-source torrent streaming for movies and series. No ads, no subscriptions.">
+<meta property="og:image" content="https://relax.htetwaiyan.com/og-image.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="RELAX: Stream movies, beautifully. A dusk scene playing in the RELAX player, with a subtitle and seek bar.">
 
-<!-- Twitter -->
+<!-- Twitter / X -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="RELAX — Stream movies, beautifully.">
-<meta name="twitter:description" content="Free, open-source desktop torrent streaming for movies and series.">
+<meta name="twitter:description" content="Free, open-source torrent streaming for movies and series. No ads, no subscriptions.">
+<meta name="twitter:image" content="https://relax.htetwaiyan.com/og-image.png">
+<meta name="twitter:image:alt" content="RELAX: Stream movies, beautifully. A dusk scene playing in the RELAX player, with a subtitle and seek bar.">
 
 <!-- Structured data -->
 <script type="application/ld+json">
@@ -30,170 +37,27 @@
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   "name": "RELAX",
-  "description": "Open-source desktop torrent streaming app for movies and series. No ads, no subscriptions.",
+  "url": "https://relax.htetwaiyan.com/",
+  "image": "https://relax.htetwaiyan.com/og-image.png",
+  "description": "Free, open-source desktop app for streaming movies and series over torrents. No ads, no subscriptions.",
   "applicationCategory": "MultimediaApplication",
-  "operatingSystem": "macOS 12+, Windows 10+",
+  "operatingSystem": "macOS 12 or later (Apple Silicon)",
+  "softwareVersion": "0.0.4",
+  "releaseNotes": "https://relax.htetwaiyan.com/releases.html",
+  "isAccessibleForFree": true,
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-  "license": "https://opensource.org/licenses/MIT"
+  "license": "https://opensource.org/licenses/MIT",
+  "author": { "@type": "Person", "name": "Htet Wai Yan", "url": "https://www.htetwaiyan.com" }
 }
 </script>
-<style>
-  *, *::before, *::after { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
-    background: #F2EFE6;
-    color: #0F1B17;
-    -webkit-font-smoothing: antialiased;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-  }
-  a { color: inherit; text-decoration: none; }
-
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1.5rem 2.5rem;
-  }
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 0.65rem;
-    font-weight: 700;
-    font-size: 1.15rem;
-    letter-spacing: -0.01em;
-  }
-  .brand svg { width: 36px; height: 36px; }
-  nav { display: flex; gap: 2rem; font-size: 0.95rem; color: #4A5754; }
-  nav a:hover { color: #0F1B17; }
-
-  main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding: 3rem 1.5rem 5rem;
-  }
-
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.55rem;
-    padding: 0.4rem 1rem;
-    background: #DDEFE5;
-    border-radius: 999px;
-    font-size: 0.85rem;
-    color: #1F3A30;
-    margin-bottom: 2.75rem;
-  }
-  .chip::before {
-    content: "";
-    width: 6px; height: 6px;
-    background: #0F6E56;
-    border-radius: 50%;
-  }
-
-  h1 {
-    font-size: clamp(2.5rem, 6vw, 4.5rem);
-    line-height: 1.05;
-    letter-spacing: -0.03em;
-    margin: 0 0 1.5rem;
-    font-weight: 700;
-  }
-  h1 .accent { color: #0F6E56; }
-
-  .lede {
-    max-width: 32rem;
-    color: #5A6660;
-    font-size: 1.1rem;
-    line-height: 1.5;
-    margin: 0 0 3rem;
-  }
-
-  .downloads {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-    justify-content: center;
-    margin-bottom: 1.5rem;
-  }
-  .dl {
-    display: flex;
-    align-items: center;
-    gap: 0.9rem;
-    padding: 1rem 1.5rem;
-    border-radius: 999px;
-    min-width: 18rem;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
-  }
-  .dl:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(15, 27, 23, 0.1); }
-  .dl .label { flex: 1; text-align: left; line-height: 1.2; }
-  .dl .label small { display: block; font-size: 0.78rem; opacity: 0.75; font-weight: 400; margin-bottom: 2px; }
-  .dl .label span { font-size: 1.05rem; font-weight: 600; }
-
-  .dl.primary   { background: #0F6E56; color: #fff; }
-  .dl.secondary { background: #0F1B17; color: #fff; }
-  .dl.tertiary  { background: #E5E2D7; color: #0F1B17; }
-
-  .dl.disabled { opacity: 0.45; cursor: not-allowed; }
-  .dl.disabled:hover { transform: none; box-shadow: none; }
-
-  .meta {
-    color: #6B7670;
-    font-size: 0.9rem;
-    margin: 0 0 1.25rem;
-  }
-  .notice {
-    max-width: 34rem;
-    color: #6B7670;
-    font-size: 0.85rem;
-    line-height: 1.6;
-    margin: 0 0 3rem;
-  }
-  .notice a {
-    color: #0F6E56;
-    border-bottom: 1px solid currentColor;
-  }
-  .notice a:hover { color: #0A4F3D; }
-  .notice code {
-    margin-top: 1.25rem;
-    display: inline-block;
-    background: #0f1b1760;
-    color: #DDEFE5;
-    padding: 0.15rem 0.55rem;
-    border-radius: 6px;
-    font-size: 0.82rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  }
-  .divider {
-    width: 1px; height: 32px; background: #C9C5B6; margin-bottom: 2.5rem;
-  }
-  .features {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 2.5rem;
-    color: #4A5754;
-    font-size: 0.95rem;
-  }
-  .features div { display: flex; align-items: center; gap: 0.5rem; }
-  .features svg { color: #0F6E56; }
-
-  @media (max-width: 640px) {
-    header { padding: 1rem 1.25rem; }
-    nav { gap: 1.25rem; font-size: 0.9rem; }
-    .dl { min-width: 100%; }
-    .features { gap: 1.25rem 1.75rem; }
-  }
-</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400..700&family=Inter:opsz,wght@14..32,500..800&display=swap">
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header>
-    <a class="brand" href="/">
+  <header class="site-header">
+    <a class="brand" href="index.html" aria-label="RELAX home">
       <svg viewBox="-25 -25 250 250" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <rect width="200" height="200" rx="40" fill="#0F6E56"/>
         <circle cx="79" cy="100" r="42" fill="#5DCAA5"/>
@@ -201,46 +65,135 @@
       </svg>
       RELAX
     </a>
-    <nav>
-      <a href="/releases.html">Releases</a>
-      <a href="/architecture.html">Architecture</a>
+    <nav class="site-nav" aria-label="Primary">
+      <a href="releases.html">Releases</a>
+      <a href="architecture.html">Architecture</a>
       <a href="https://github.com/HtetWaiYann/relax" target="_blank" rel="noopener">GitHub</a>
     </nav>
   </header>
 
-  <main>
-    <a class="chip" href="/releases.html#v0.0.4">v0.0.4 &nbsp;—&nbsp; Latest released on Oct 2026</a>
+  <div class="screen-wrap">
+    <section class="screen" aria-labelledby="title">
+      <!-- An original film still in flat shapes (no gradients): dusk over a lake. -->
+      <svg class="scene" viewBox="0 0 1200 502" preserveAspectRatio="xMaxYMid slice" aria-hidden="true" focusable="false">
+        <rect width="1200" height="502" fill="#2B5E52"/>
+        <circle cx="985" cy="262" r="64" fill="#9FE1CB"/>
+        <path d="M0 300 C200 262 350 286 500 272 S800 246 1000 276 S1150 284 1200 268 V502 H0Z" fill="#214D44"/>
+        <rect y="332" width="1200" height="170" fill="#2F6B5D"/>
+        <g fill="#9FE1CB" opacity="0.55">
+          <rect x="925" y="346" width="120" height="4" rx="2"/>
+          <rect x="943" y="362" width="84" height="4" rx="2"/>
+          <rect x="959" y="378" width="52" height="4" rx="2"/>
+          <rect x="971" y="394" width="28" height="3" rx="1.5"/>
+        </g>
+        <path d="M0 372 C150 340 300 350 420 378 S600 430 650 502 H0Z" fill="#173E36"/>
+        <path d="M690 502 C810 428 960 404 1200 414 V502Z" fill="#10302A"/>
+        <path d="M1102 410 c0-7 4-12 9-12 s9 5 9 12 l3 1 -1 30 h-22 l-1-30z M1111 384 a6 6 0 1 1 0 12 a6 6 0 1 1 0-12z" fill="#0A221D"/>
+      </svg>
+      <h1 id="title">Stream movies, beautifully.</h1>
+      <div class="spacer"></div>
+      <p class="cue"><span>Open-source torrent streaming for movies and series. No ads, no subscriptions.</span></p>
+      <div class="player" aria-hidden="true">
+        <div class="seek"><span class="buffered"></span><span class="played"></span></div>
+        <div class="player-meta">
+          <a href="releases.html#v0.0.4" tabindex="-1">Version 0.0.4, October 2026</a>
+          <span>0:08:14 / 1:58:40</span>
+        </div>
+      </div>
+    </section>
+  </div>
 
-    <h1>Stream movies,<br><span class="accent">beautifully.</span></h1>
-    <p class="lede">Open-source torrent streaming for movies and series. No ads, no subscriptions.</p>
+  <main class="home">
+    <section class="band" id="download" aria-labelledby="download-title">
+      <h2 id="download-title">Download</h2>
+      <div>
+        <ul class="platforms">
+          <li>
+            <span class="os"><strong>macOS</strong><span>Apple Silicon, macOS 12 or later</span></span>
+            <a class="button" href="https://drive.google.com/file/d/1ew1I9GA1uojBY-e35oGlG7KcWrUtEZAN/view?usp=sharing" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v12"/><path d="m6 11 6 6 6-6"/><path d="M5 20h14"/></svg>
+              Download for Mac
+            </a>
+          </li>
+          <li>
+            <span class="os"><strong>macOS</strong><span>Intel</span></span>
+            <span class="soon">Not available yet</span>
+          </li>
+          <li>
+            <span class="os"><strong>Windows</strong><span>Windows 10 or later</span></span>
+            <span class="soon">Not available yet</span>
+          </li>
+        </ul>
 
-    <div class="downloads">
-      <a class="dl primary" href="https://drive.google.com/file/d/1ew1I9GA1uojBY-e35oGlG7KcWrUtEZAN/view?usp=sharing" download target="_blank" rel="noopener">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.05 12.04c-.03-2.96 2.42-4.39 2.53-4.46-1.38-2.02-3.53-2.3-4.3-2.33-1.83-.19-3.57 1.08-4.5 1.08-.94 0-2.37-1.05-3.9-1.02-2 .03-3.85 1.17-4.88 2.96-2.08 3.61-.53 8.95 1.5 11.88 1 1.43 2.18 3.03 3.72 2.97 1.5-.06 2.07-.97 3.88-.97s2.32.97 3.9.94c1.61-.03 2.63-1.45 3.61-2.89 1.14-1.66 1.61-3.27 1.64-3.36-.04-.02-3.15-1.21-3.18-4.8zM14.18 3.65c.83-1 1.39-2.4 1.24-3.79-1.2.05-2.65.8-3.5 1.8-.77.89-1.44 2.32-1.26 3.68 1.34.1 2.7-.68 3.52-1.69z"/></svg>
-        <span class="label"><small>Download for</small><span>macOS Apple Silicon</span></span>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="5 12 12 19 19 12"/></svg>
-      </a>
+        <div class="first-launch">
+          <h3>First launch on macOS</h3>
+          <p>RELAX isn't notarized, so macOS blocks it the first time you open it. After moving it to Applications, run this once in Terminal:</p>
+          <div class="command">
+            <code id="xattr-cmd">xattr -cr /Applications/RELAX.app</code>
+            <button type="button" data-copy="xattr-cmd">Copy</button>
+          </div>
+        </div>
+      </div>
+    </section>
 
-      <span class="dl tertiary disabled" aria-disabled="true">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.05 12.04c-.03-2.96 2.42-4.39 2.53-4.46-1.38-2.02-3.53-2.3-4.3-2.33-1.83-.19-3.57 1.08-4.5 1.08-.94 0-2.37-1.05-3.9-1.02-2 .03-3.85 1.17-4.88 2.96-2.08 3.61-.53 8.95 1.5 11.88 1 1.43 2.18 3.03 3.72 2.97 1.5-.06 2.07-.97 3.88-.97s2.32.97 3.9.94c1.61-.03 2.63-1.45 3.61-2.89 1.14-1.66 1.61-3.27 1.64-3.36-.04-.02-3.15-1.21-3.18-4.8zM14.18 3.65c.83-1 1.39-2.4 1.24-3.79-1.2.05-2.65.8-3.5 1.8-.77.89-1.44 2.32-1.26 3.68 1.34.1 2.7-.68 3.52-1.69z"/></svg>
-        <span class="label"><small>macOS Intel</small><span>Coming soon</span></span>
-      </span>
+    <section class="band" aria-labelledby="features-title">
+      <h2 id="features-title">What it does</h2>
+      <dl class="features">
+        <div>
+          <dt>Plays while it downloads</dt>
+          <dd>Pick a movie or episode and it starts in seconds. No waiting for the whole file.</dd>
+        </div>
+        <div>
+          <dt>Handles Dolby and DTS audio</dt>
+          <dd>Soundtracks your browser can't play are converted on the fly, so every file has sound.</dd>
+        </div>
+        <div>
+          <dt>Finds subtitles for you</dt>
+          <dd>Uses subtitles inside the file or torrent, or fetches them online, with timing you can adjust.</dd>
+        </div>
+        <div>
+          <dt>Picks up where you left off</dt>
+          <dd>Continue watching any movie or episode from the exact second you stopped.</dd>
+        </div>
+      </dl>
+    </section>
 
-      <span class="dl tertiary disabled" aria-disabled="true">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M0 3.449L9.75 2.1v9.451H0V3.449zM10.949 1.949L24 0v11.4H10.949V1.949zM0 12.6h9.75v9.451L0 20.699V12.6zM10.949 12.6H24V24l-13.051-1.899V12.6z"/></svg>
-        <span class="label"><small>Windows</small><span>Coming soon</span></span>
-      </span>
-    </div>
-
-    <p class="meta">Free and open-source · macOS 12+ · Windows 10+</p>
-    <p class="notice">
-      <strong>macOS:</strong> the app isn't notarized, so Gatekeeper will block it on first launch. After dragging RELAX to Applications, run this once in Terminal to clear the quarantine flag: <code>xattr -cr /Applications/RELAX.app</code>
-    </p>
-    <p class="notice">
-      Built by <a href="https://www.htetwaiyan.com" target="_blank" rel="noopener">Htet Wai Yan</a> for his own personal use — use at your own risk. Want to build it yourself?
-      Check the source on <a href="https://github.com/HtetWaiYann/relax" target="_blank" rel="noopener">GitHub</a>.
-    </p>
+    <section class="band" aria-labelledby="about-title">
+      <h2 id="about-title">About</h2>
+      <div>
+        <p>Built by <a class="inline-link" href="https://www.htetwaiyan.com" target="_blank" rel="noopener">Htet Wai Yan</a> for his own use. Use it at your own risk.</p>
+        <p>Want to build it yourself? The source is on <a class="inline-link" href="https://github.com/HtetWaiYann/relax" target="_blank" rel="noopener">GitHub</a>, and the <a class="inline-link" href="architecture.html">architecture write-up</a> explains how it works.</p>
+      </div>
+    </section>
   </main>
+
+  <footer class="site-footer">
+    <div>
+      <span>RELAX is free and open source under the MIT license.</span>
+      <nav aria-label="Footer">
+        <a href="releases.html">Releases</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="https://github.com/HtetWaiYann/relax" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+
+  <script>
+    // Copy-to-clipboard for the Gatekeeper command.
+    document.querySelectorAll('[data-copy]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const text = document.getElementById(btn.dataset.copy).textContent;
+        try {
+          await navigator.clipboard.writeText(text);
+          btn.textContent = 'Copied';
+        } catch {
+          btn.textContent = 'Press ⌘C';
+          getSelection().selectAllChildren(document.getElementById(btn.dataset.copy));
+        }
+        setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+      });
+    });
+  </script>
   <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

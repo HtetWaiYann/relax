@@ -4,100 +4,51 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Release notes — RELAX</title>
-<meta name="description" content="What's new in each RELAX release: player improvements, fixes and new features.">
+<meta name="description" content="What's new in each RELAX version. v0.0.4 fixes silent Dolby and DTS movies and adds a draggable seek bar, volume boost, night mode and shortcuts.">
+<meta name="author" content="Htet Wai Yan">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#0F6E56">
 <link rel="canonical" href="https://relax.htetwaiyan.com/releases.html">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg viewBox='-25 -25 250 250' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='200' height='200' rx='40' fill='%230F6E56'/%3E%3Ccircle cx='79' cy='100' r='42' fill='%235DCAA5'/%3E%3Ccircle cx='121' cy='100' r='42' fill='%239FE1CB'/%3E%3C/svg%3E">
-<style>
-  *, *::before, *::after { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
-    background: #F2EFE6;
-    color: #0F1B17;
-    -webkit-font-smoothing: antialiased;
-  }
-  a { color: inherit; }
 
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1.5rem 2.5rem;
-    border-bottom: 1px solid #E2DECF;
-  }
-  .brand { display: flex; align-items: center; gap: 0.65rem; font-weight: 700; font-size: 1.15rem; letter-spacing: -0.01em; text-decoration: none; }
-  .brand svg { width: 36px; height: 36px; }
-  header nav { display: flex; gap: 2rem; font-size: 0.95rem; color: #4A5754; }
-  header nav a { text-decoration: none; }
-  header nav a:hover, header nav a[aria-current="page"] { color: #0F1B17; }
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="RELAX">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://relax.htetwaiyan.com/releases.html">
+<meta property="og:title" content="RELAX release notes">
+<meta property="og:description" content="What's new in RELAX: sound fixes, a draggable seek bar, louder audio, better subtitles and keyboard shortcuts.">
+<meta property="og:image" content="https://relax.htetwaiyan.com/og-image.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="RELAX: Stream movies, beautifully. A dusk scene playing in the RELAX player, with a subtitle and seek bar.">
 
-  .prose { max-width: 46rem; margin: 0 auto; padding: 3rem 1.5rem 6rem; line-height: 1.65; font-size: 1.02rem; color: #26312D; }
-  .prose h1 { font-size: clamp(1.9rem, 4vw, 2.6rem); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 0.75rem; color: #0F1B17; }
-  .prose .lede { color: #5A6660; font-size: 1.1rem; margin: 0 0 2.5rem; }
-  .prose h3 { font-size: 1.05rem; margin: 2rem 0 0.5rem; color: #0F1B17; }
-  .prose p { margin: 0 0 1rem; }
-  .prose a { color: #0F6E56; border-bottom: 1px solid currentColor; text-decoration: none; }
-  .prose a:hover { color: #0A4F3D; }
-  .prose ul { padding-left: 1.4rem; margin: 0 0 1rem; }
-  .prose li { margin: 0.45rem 0; }
-  .prose strong { color: #0F1B17; }
-  .prose code {
-    background: #0f1b170d;
-    padding: 0.12rem 0.4rem;
-    border-radius: 5px;
-    font-size: 0.88em;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  }
+<!-- Twitter / X -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RELAX release notes">
+<meta name="twitter:description" content="What's new in RELAX: sound fixes, a draggable seek bar, louder audio, better subtitles and keyboard shortcuts.">
+<meta name="twitter:image" content="https://relax.htetwaiyan.com/og-image.png">
+<meta name="twitter:image:alt" content="RELAX: Stream movies, beautifully. A dusk scene playing in the RELAX player, with a subtitle and seek bar.">
 
-  .release { border-top: 1px solid #C9C5B6; padding-top: 2rem; }
-  .release-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 1rem; margin-bottom: 1.25rem; }
-  .release-head h2 { font-size: 1.6rem; letter-spacing: -0.01em; margin: 0; color: #0F1B17; scroll-margin-top: 1.5rem; }
-  .release-head time { color: #6B7670; font-size: 0.95rem; }
-  .tag {
-    display: inline-flex; align-items: center; gap: 0.45rem;
-    padding: 0.2rem 0.75rem; border-radius: 999px;
-    background: #DDEFE5; color: #1F3A30; font-size: 0.8rem;
-  }
-  .tag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #0F6E56; }
-
-  .callout {
-    background: #DDEFE5;
-    border-radius: 12px;
-    padding: 1rem 1.25rem;
-    margin: 0 0 1.5rem;
-    color: #1F3A30;
-  }
-  .callout strong { color: #0F1B17; }
-
-  table { width: 100%; border-collapse: collapse; margin: 0 0 1.25rem; font-size: 0.95rem; }
-  th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #E2DECF; vertical-align: top; }
-  th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: #8A938E; font-weight: 600; }
-  td:first-child { white-space: nowrap; width: 1%; }
-  kbd {
-    display: inline-block;
-    min-width: 1.6em;
-    padding: 0.08rem 0.45rem;
-    border: 1px solid #C9C5B6;
-    border-bottom-width: 2px;
-    border-radius: 6px;
-    background: #FBFAF5;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.82em;
-    text-align: center;
-    color: #0F1B17;
-  }
-
-  @media (max-width: 640px) {
-    header { padding: 1rem 1.25rem; }
-    header nav { gap: 1.25rem; font-size: 0.9rem; }
-    .prose { padding-top: 2rem; }
-    td:first-child { white-space: normal; }
-  }
-</style>
+<!-- Structured data -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "name": "RELAX release notes",
+  "url": "https://relax.htetwaiyan.com/releases.html",
+  "about": { "@type": "SoftwareApplication", "name": "RELAX", "softwareVersion": "0.0.4", "url": "https://relax.htetwaiyan.com/" }
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400..700&family=Inter:opsz,wght@14..32,500..800&display=swap">
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header>
-    <a class="brand" href="/">
+  <header class="site-header">
+    <a class="brand" href="index.html" aria-label="RELAX home">
       <svg viewBox="-25 -25 250 250" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <rect width="200" height="200" rx="40" fill="#0F6E56"/>
         <circle cx="79" cy="100" r="42" fill="#5DCAA5"/>
@@ -105,14 +56,32 @@
       </svg>
       RELAX
     </a>
-    <nav>
-      <a href="/">Home</a>
-      <a href="/releases.html" aria-current="page">Releases</a>
-      <a href="/architecture.html">Architecture</a>
+    <nav class="site-nav" aria-label="Primary">
+      <a href="releases.html" aria-current="page">Releases</a>
+      <a href="architecture.html">Architecture</a>
       <a href="https://github.com/HtetWaiYann/relax" target="_blank" rel="noopener">GitHub</a>
     </nav>
   </header>
 
+  <div class="doc">
+    <aside class="toc">
+      <p>On this page</p>
+      <nav aria-label="On this page">
+        <ul>
+          <li><a href="#v0.0.4">v0.0.4</a>
+            <ul>
+              <li><a href="#v0.0.4-seek-bar">Seek bar</a></li>
+              <li><a href="#v0.0.4-louder-clearer-audio">Louder, clearer audio</a></li>
+              <li><a href="#v0.0.4-subtitles">Subtitles</a></li>
+              <li><a href="#v0.0.4-keyboard-shortcuts">Keyboard shortcuts</a></li>
+              <li><a href="#v0.0.4-player">Player</a></li>
+              <li><a href="#v0.0.4-streaming-reliability">Streaming &amp; reliability</a></li>
+              <li><a href="#v0.0.4-requirements">Requirements</a></li>
+            </ul>
+          </li>
+        </ul>
+      </nav>
+    </aside>
   <main class="prose">
     <h1>Release notes</h1>
     <p class="lede">What's new in each version of RELAX.</p>
@@ -121,7 +90,7 @@
       <div class="release-head">
         <h2>v0.0.4</h2>
         <time datetime="2026-10">October 2026</time>
-        <span class="tag">Latest</span>
+        <span class="latest">Latest</span>
       </div>
 
       <p>A big release for the player: sound fixes, a seek bar you can actually drag, louder audio, much better subtitles, and keyboard shortcuts.</p>
@@ -130,21 +99,21 @@
         <strong>Fixed: no sound on many movies.</strong> Files with Dolby Digital (AC3 / E-AC3), DTS or TrueHD audio played silently on Apple Silicon Macs without Rosetta. RELAX now ships a native media inspector, so these files are converted on the fly again and play with sound. This also brings back audio-track switching and built-in MKV subtitles on those Macs.
       </div>
 
-      <h3>Seek bar</h3>
+      <h3 id="v0.0.4-seek-bar">Seek bar</h3>
       <ul>
         <li><strong>Grab and drag</strong> the seek bar. A time label follows your cursor, so you know exactly where you'll land.</li>
         <li>The playhead <strong>jumps to the new position immediately</strong> when you let go or click, and "Buffering…" shows while that part of the movie loads.</li>
         <li>Dragging and holding <kbd>←</kbd>/<kbd>→</kbd> no longer floods the stream with requests, so seeking is noticeably smoother.</li>
       </ul>
 
-      <h3>Louder, clearer audio</h3>
+      <h3 id="v0.0.4-louder-clearer-audio">Louder, clearer audio</h3>
       <ul>
         <li><strong>Volume boost</strong> up to 200%, for when a movie is just too quiet.</li>
         <li><strong>Night mode</strong>: louder dialogue, softer explosions. Great for late nights and laptop speakers.</li>
         <li>Both live in the ⚙ menu next to playback speed, and are remembered.</li>
       </ul>
 
-      <h3>Subtitles</h3>
+      <h3 id="v0.0.4-subtitles">Subtitles</h3>
       <ul>
         <li>Online subtitles now show their <strong>file or release name</strong> (e.g. <code>The.Matrix.1999.BluRay.1080p…</code>) instead of "English" for every entry, so you can pick the one that matches your copy.</li>
         <li>Subtitles for the deaf and hard of hearing are marked <strong>SDH</strong>.</li>
@@ -153,24 +122,24 @@
         <li>Wider subtitle menu, so long names stay readable.</li>
       </ul>
 
-      <h3>Keyboard shortcuts</h3>
+      <h3 id="v0.0.4-keyboard-shortcuts">Keyboard shortcuts</h3>
       <table>
         <thead><tr><th>Key</th><th>Action</th></tr></thead>
         <tbody>
           <tr><td><kbd>Space</kbd> / <kbd>K</kbd></td><td>Play / pause</td></tr>
           <tr><td><kbd>←</kbd> / <kbd>→</kbd></td><td>Back / forward 10 seconds</td></tr>
           <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>Volume up / down</td></tr>
-          <tr><td><kbd>0</kbd>–<kbd>9</kbd></td><td>Jump to 0–90% of the movie <em>(new)</em></td></tr>
-          <tr><td><kbd>C</kbd></td><td>Subtitles on / off (remembers your track and delay) <em>(new)</em></td></tr>
-          <tr><td><kbd>G</kbd> / <kbd>H</kbd></td><td>Subtitle delay −/+ 0.1 s <em>(new)</em></td></tr>
-          <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>Slower / faster playback <em>(new)</em></td></tr>
-          <tr><td><kbd>,</kbd> / <kbd>.</kbd></td><td>Previous / next frame while paused <em>(new)</em></td></tr>
+          <tr><td><kbd>0</kbd>–<kbd>9</kbd></td><td>Jump to 0–90% of the movie <em>New</em></td></tr>
+          <tr><td><kbd>C</kbd></td><td>Subtitles on / off (remembers your track and delay) <em>New</em></td></tr>
+          <tr><td><kbd>G</kbd> / <kbd>H</kbd></td><td>Subtitle delay −/+ 0.1 s <em>New</em></td></tr>
+          <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>Slower / faster playback <em>New</em></td></tr>
+          <tr><td><kbd>,</kbd> / <kbd>.</kbd></td><td>Previous / next frame while paused <em>New</em></td></tr>
           <tr><td><kbd>M</kbd></td><td>Mute</td></tr>
           <tr><td><kbd>F</kbd></td><td>Fullscreen</td></tr>
         </tbody>
       </table>
 
-      <h3>Player</h3>
+      <h3 id="v0.0.4-player">Player</h3>
       <ul>
         <li><strong>Remembers your volume, mute and playback speed</strong> between movies.</li>
         <li>Playback speed no longer resets to 1× after seeking or switching audio tracks.</li>
@@ -178,7 +147,7 @@
         <li>The episode (S · E) button now fades away with the other controls instead of sitting over the picture.</li>
       </ul>
 
-      <h3>Streaming &amp; reliability</h3>
+      <h3 id="v0.0.4-streaming-reliability">Streaming &amp; reliability</h3>
       <ul>
         <li><strong>Faster start</strong> for files that store their index at the end, common with MP4s.</li>
         <li>Better download prioritisation around where you're watching, especially after seeking.</li>
@@ -187,12 +156,25 @@
         <li>Smoother playback overall: less background work while a movie is playing.</li>
       </ul>
 
-      <h3>Requirements</h3>
+      <h3 id="v0.0.4-requirements">Requirements</h3>
       <ul>
         <li>macOS 12 (Monterey) or newer on Apple Silicon. Intel Mac and Windows builds are still coming soon.</li>
       </ul>
     </section>
   </main>
+  </div>
+  <footer class="site-footer">
+    <div>
+      <span>RELAX is free and open source under the MIT license.</span>
+      <nav aria-label="Footer">
+        <a href="index.html">Download</a>
+        <a href="releases.html">Releases</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="https://github.com/HtetWaiYann/relax" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+  <script src="toc.js"></script>
   <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>
