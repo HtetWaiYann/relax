@@ -686,7 +686,7 @@ function findSubtitleFiles(torrent: TorrentLike, videoIdx: number): Subtitle[] {
     const url = `http://localhost:${STREAM_PORT}/sub/${torrent.infoHash}/${i}.vtt`;
     out.push({
       language: lang,
-      label: lang.toUpperCase() || f.name,
+      label: f.name || lang.toUpperCase(),
       url,
       format: fmt,
       sourceName: 'Embedded',

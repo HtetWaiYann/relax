@@ -44,7 +44,7 @@ export function SubtitlesPanel({
   ];
 
   return (
-    <div className="pointer-events-auto absolute bottom-20 right-4 z-20 w-72 rounded-xl border border-white/10 bg-surface-elevated/95 p-4 shadow-2xl">
+    <div className="pointer-events-auto absolute bottom-20 right-4 z-20 w-[26rem] max-w-[calc(100vw-2rem)] rounded-xl border border-white/10 bg-surface-elevated/95 p-4 shadow-2xl">
       <div className="mb-3 flex items-center justify-between">
         {view === 'style' ? (
           <button type="button" onClick={() => setView('tracks')}
@@ -190,7 +190,10 @@ function TrackOption({
               : 'text-neutral-200 hover:bg-white/5'
         } ${isLoading ? 'cursor-wait opacity-70' : isUnsupported ? 'cursor-not-allowed' : 'cursor-pointer'}`}
       >
-        <span className="truncate text-left">
+        {/* Release / file names are long dot-joined strings with no spaces —
+            let them wrap anywhere (two lines max) so the distinguishing tail
+            (group, source, .ENG.srt) stays visible. */}
+        <span className="line-clamp-2 text-left [overflow-wrap:anywhere]" title={track.label}>
           {track.label}
           {isUnsupported && <span className="ml-2 text-[10px] uppercase">(not supported)</span>}
         </span>
