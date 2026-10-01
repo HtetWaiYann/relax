@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  MatchStatus,
   MediaType,
   SortOrder,
   WatchlistFilter,
@@ -108,6 +109,35 @@ export function useStreams(
       }),
     enabled: ready,
     staleTime: 60_000,
+  });
+}
+
+const isLive = (s: MatchStatus) => s === MatchStatus.LIVE || s === MatchStatus.PAUSED;
+const ts = (d: Date) => ({ seconds: BigInt(Math.floor(d.getTime() / 1000)), nanos: 0 });
+
+// "Today" in the user's local timezone; refreshes every minute while a match is live.
+export function useTodayMatches() {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return useQuery({
+    queryKey: ['sports', 'today', start.toDateString()],
+    queryFn: () => relaxClient.getTodayMatches({ dayStart: ts(start), dayEnd: ts(end) }),
+    refetchInterval: (q) =>
+      q.state.data?.matches.some((m) => isLive(m.status)) ? 60_000 : false,
+    retry: false,
+  });
+}
+
+export function useMatchStreams(matchId: number) {
+  return useQuery({
+    queryKey: ['sports', 'match', matchId],
+    queryFn: () => relaxClient.getMatchStreams({ matchId }),
+    enabled: matchId > 0,
+    refetchInterval: (q) =>
+      q.state.data?.match && isLive(q.state.data.match.status) ? 60_000 : false,
+    retry: false,
   });
 }
 

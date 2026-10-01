@@ -14,6 +14,7 @@ const NAV = [
   { to: '/movies', label: 'Movies', end: false },
   { to: '/series', label: 'Series', end: false },
   { to: '/anime', label: 'Anime', end: false },
+  { to: '/sports', label: 'Sports', end: false },
 ];
 
 const ICON_NAV: { to: string; label: string; icon: LucideIcon; end: boolean }[] = [

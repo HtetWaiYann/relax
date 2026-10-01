@@ -97,6 +97,7 @@
     "electron": "^33.3.0",
     "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
+    "hls.js": "^1.7.3",
     "lucide-react": "^1.18.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

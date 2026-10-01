@@ -1,7 +1,7 @@
 import { createConnectTransport } from '@connectrpc/connect-web';
 import { createRelaxClient, type RelaxClient } from '@relax/types';
 
-function backendUrl(): string {
+export function backendUrl(): string {
   if (typeof window !== 'undefined' && window.relax?.getBackendUrl) {
     return window.relax.getBackendUrl();
   }

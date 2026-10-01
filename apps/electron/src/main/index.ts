@@ -145,7 +145,7 @@ function applyContentSecurityPolicy() {
       `script-src 'self'${isDev ? " 'unsafe-eval' 'unsafe-inline'" : ''}`,
       `connect-src 'self' ${BACKEND_URL} ${STREAM_BASE_URL} ws://localhost:5173 http://localhost:5173 blob:`,
       `media-src 'self' ${STREAM_BASE_URL} blob:`,
-      "img-src 'self' data: https://image.tmdb.org",
+      "img-src 'self' data: https://image.tmdb.org https://crests.football-data.org",
       "style-src 'self' 'unsafe-inline'",
       "font-src 'self' data:",
     ].join('; ');

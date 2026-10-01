@@ -8,6 +8,9 @@ import { Person } from './pages/Person';
 import { Settings } from './pages/Settings';
 import { Watch } from './pages/Watch';
 import { Watchlist } from './pages/Watchlist';
+import { Sports } from './pages/Sports';
+import { Match } from './pages/Match';
+import { LiveWatch } from './pages/LiveWatch';
 
 export function App() {
   return (
@@ -33,6 +36,8 @@ export function App() {
               />
             }
           />
+          <Route path="sports" element={<Sports />} />
+          <Route path="sports/:id" element={<Match />} />
           <Route path="search" element={<SearchResults />} />
           <Route path="watchlist" element={<Watchlist />} />
           <Route path="settings" element={<Settings />} />
@@ -40,6 +45,7 @@ export function App() {
           <Route path="person/:id" element={<Person />} />
         </Route>
         <Route path="watch/:infoHash" element={<Watch />} />
+        <Route path="live" element={<LiveWatch />} />
       </Routes>
     </HashRouter>
   );
