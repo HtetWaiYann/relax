@@ -1,3 +1,4 @@
+import { type ReactNode } from 'react';
 import { type MediaType } from '@relax/types';
 
 export interface VideoPlayerProps {
@@ -16,6 +17,8 @@ export interface VideoPlayerProps {
   magnetUri?: string;
   posterUrl?: string;
   onBack: () => void;
+  // Extra control on the right of the top bar (fades with the controls).
+  headerAction?: ReactNode;
 }
 
 export const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;

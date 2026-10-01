@@ -12,7 +12,9 @@ import {
   rmSync,
   readFileSync,
   writeFileSync,
+  createReadStream,
 } from 'node:fs';
+import { setPriority } from 'node:os';
 import { join } from 'node:path';
 import { app, ipcMain, type WebContents } from 'electron';
 import process from 'node:process';
@@ -107,13 +109,18 @@ interface Session {
   fileIdx: number;
   filePath: string;
   initialDownloaded: number;
+  // Head + tail bytes the prebuffer drains (denominator for initialDownloaded).
+  prebufferTotal: number;
   bufferingComplete: boolean;
+  // Resolves once the file's tail is on disk (or failed to download).
+  tailReady: Promise<void>;
   statsTimer?: NodeJS.Timeout;
   probe: ProbeResult | null;
   probePromise?: Promise<void>;
+  // Probe failed with the full prebuffer on disk — the file is genuinely
+  // unprobeable; don't spawn ffprobe again on every stream request.
+  probeFailed: boolean;
   selectedAudioTypeIdx: number;
-  // Cache: subtitle typeIdx -> extracted VTT text.
-  mkvSubCache: Map<number, string>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -180,6 +187,8 @@ let client: any | null = null;
 let streamServer: ReturnType<typeof createServer> | null = null;
 const sessions = new Map<string, Session>();
 const subscribers = new Map<string, Set<WebContents>>();
+// Active piece-priority hint per `${infoHash}:${fileIdx}` (see setPosition).
+const hintStreams = new Map<string, { stream: { destroy(): void }; start: number }>();
 
 // Safeguard: webtorrent can throw synchronously from a wire's handshake
 // listener when a peer completes its handshake a tick after its torrent was
@@ -253,63 +262,95 @@ function absoluteFilePath(torrent: TorrentLike, file: FileLike): string {
 // it in series with the full prebuffer drain was the main cause of the
 // extra "initial buffering" wall time after this commit landed.
 const PROBE_TRIGGER_BYTES = 2 * 1024 * 1024;
+// MP4s with the moov atom at the end, and MKV seek cues, live in the tail.
+// Chromium/ffprobe need them before playback can start, so fetch the tail in
+// parallel with the head instead of after it.
+const TAIL_BYTES = 2 * 1024 * 1024;
 function primeInitialBuffer(file: FileLike, sess: Session, onUpdate: () => void) {
-  const end = Math.min(INITIAL_BUFFER_BYTES, file.length) - 1;
-  const stream = file.createReadStream({ start: 0, end });
+  const headEnd = Math.min(INITIAL_BUFFER_BYTES, file.length);
+  const tailStart = Math.max(headEnd, file.length - TAIL_BYTES);
+  sess.prebufferTotal = headEnd + (file.length - tailStart);
+  let headBytes = 0;
   let probeKicked = false;
-  const kickProbe = () => {
-    if (probeKicked) return;
-    probeKicked = true;
+  const head = drainRange(file, 0, headEnd, (n) => {
+    sess.initialDownloaded += n;
+    headBytes += n;
+    onUpdate();
+    if (!probeKicked && headBytes >= PROBE_TRIGGER_BYTES) {
+      probeKicked = true;
+      void ensureProbe(sess);
+    }
+  });
+  sess.tailReady = drainRange(file, tailStart, file.length, (n) => {
+    sess.initialDownloaded += n;
+    onUpdate();
+  });
+  void Promise.all([head, sess.tailReady]).then(() => {
+    sess.bufferingComplete = true;
+    onUpdate();
+    // Also the retry for a probe that failed on a too-short head (e.g. MKV
+    // with large font attachments up front).
     void ensureProbe(sess);
-  };
-  stream.on('data', (chunk: Buffer) => {
-    sess.initialDownloaded += chunk.length;
-    onUpdate();
-    if (sess.initialDownloaded >= PROBE_TRIGGER_BYTES) kickProbe();
   });
-  stream.on('end', () => {
-    sess.bufferingComplete = true;
-    onUpdate();
-    kickProbe();
-  });
-  stream.on('error', (err: Error) => {
-    console.warn('[torrent] prebuffer error', err);
-    sess.bufferingComplete = true;
-    onUpdate();
-    kickProbe();
+}
+
+// Read [start, end) through webtorrent's piece-aware stream (waits for
+// pieces instead of zero-fill) and discard it. Best-effort: resolves on error.
+function drainRange(
+  file: FileLike,
+  start: number,
+  end: number,
+  onData: (bytes: number) => void = () => undefined,
+): Promise<void> {
+  if (end <= start) return Promise.resolve();
+  return new Promise((resolve) => {
+    const s = file.createReadStream({ start, end: end - 1 });
+    s.on('data', (c: Buffer) => onData(c.length));
+    s.on('end', () => resolve());
+    s.on('error', (err: Error) => {
+      console.warn('[torrent] prebuffer error', err);
+      resolve();
+    });
   });
 }
 
 async function ensureProbe(sess: Session): Promise<void> {
-  if (sess.probe || sess.probePromise) {
-    if (sess.probePromise) await sess.probePromise;
-    return;
-  }
+  if (sess.probe || sess.probeFailed) return;
+  if (sess.probePromise) return sess.probePromise;
   sess.probePromise = (async () => {
+    // ffprobe reads the file on disk, where undownloaded ranges are zeros —
+    // wait for the tail so MP4 moov / MKV cues are real.
+    await sess.tailReady;
     if (!existsSync(sess.filePath)) {
       console.warn('[ffmpeg] probe skipped — file path missing', sess.filePath);
       return;
     }
+    const fullPrebuffer = sess.bufferingComplete;
     const probe = await probeFile(sess.filePath);
+    if (!probe) {
+      // Before the prebuffer finished the head may just be too short; retry
+      // then. After it, give up rather than re-spawn per request.
+      if (fullPrebuffer) sess.probeFailed = true;
+      return;
+    }
     sess.probe = probe;
     const def = pickDefaultAudio(probe);
     if (def) sess.selectedAudioTypeIdx = def.typeIndex;
-    if (probe) {
-      const audio = audioStreams(probe);
-      const needsTranscode = audio.some((a) => audioNeedsTranscode(a.codecName));
-      console.log(
-        `[ffmpeg] probe ${sess.filePath} — duration=${probe.durationSeconds.toFixed(0)}s ` +
-        `audio=[${audio.map((a) => `${a.codecName}/${a.language || '?'}`).join(',')}] ` +
-        `transcode=${needsTranscode}`,
-      );
-    }
+    const audio = audioStreams(probe);
+    const needsTranscode = audio.some((a) => audioNeedsTranscode(a.codecName));
+    console.log(
+      `[ffmpeg] probe ${sess.filePath} — duration=${probe.durationSeconds.toFixed(0)}s ` +
+      `audio=[${audio.map((a) => `${a.codecName}/${a.language || '?'}`).join(',')}] ` +
+      `transcode=${needsTranscode}`,
+    );
   })();
   try { await sess.probePromise; } finally { sess.probePromise = undefined; }
 }
 
 function buildStats(torrent: TorrentLike, sess: Session): Stats {
-  const totalNeeded = Math.min(INITIAL_BUFFER_BYTES, fileFor(torrent, sess.fileIdx)?.length ?? 0);
-  const initial = totalNeeded > 0 ? Math.min(1, sess.initialDownloaded / totalNeeded) : 1;
+  const initial = sess.prebufferTotal > 0
+    ? Math.min(1, sess.initialDownloaded / sess.prebufferTotal)
+    : 1;
   const audios = audioStreams(sess.probe);
   const selectedAudio = audios.find((a) => a.typeIndex === sess.selectedAudioTypeIdx);
   const containerDefault = audios.find((a) => a.isDefault) ?? audios[0];
@@ -374,10 +415,12 @@ async function start(args: StartArgs): Promise<StartResult> {
       fileIdx,
       filePath: absoluteFilePath(torrent, file),
       initialDownloaded: 0,
+      prebufferTotal: 0,
       bufferingComplete: false,
+      tailReady: Promise.resolve(),
       probe: null,
+      probeFailed: false,
       selectedAudioTypeIdx: 0,
-      mkvSubCache: new Map(),
     };
     sessions.set(args.infoHash, sess);
     const tick = () => broadcastStats(args.infoHash, buildStats(torrent, sess!));
@@ -529,6 +572,7 @@ async function clearCache(infoHash?: string): Promise<{ freedBytes: number }> {
 async function stop(infoHash: string): Promise<void> {
   const sess = sessions.get(infoHash);
   if (sess?.statsTimer) clearInterval(sess.statsTimer);
+  destroyHints(infoHash);
   sessions.delete(infoHash);
   subscribers.delete(infoHash);
   if (!client) return;
@@ -593,10 +637,26 @@ async function setPosition(infoHash: string, fileIdx: number, positionSeconds: n
   if (totalSeconds <= 0) return;
   const bytesPerSec = file.length / totalSeconds;
   const startByte = Math.max(0, Math.floor(positionSeconds * bytesPerSec));
+  // The renderer reports position every ~1.5s; keep the current hint while
+  // we're still in its first 20s instead of churning a new stream per tick.
+  const key = `${infoHash}:${fileIdx}`;
+  const prev = hintStreams.get(key);
+  if (prev && startByte >= prev.start && startByte < prev.start + bytesPerSec * 20) return;
+  // One hint per file: a stale window would keep prioritising pieces the
+  // viewer has already seeked away from.
+  prev?.stream.destroy();
   const endByte = Math.min(file.length - 1, startByte + Math.floor(bytesPerSec * 30));
   const stream = file.createReadStream({ start: startByte, end: endByte });
-  stream.resume();
+  hintStreams.set(key, { stream, start: startByte });
   stream.on('error', () => undefined);
+  stream.on('close', () => { if (hintStreams.get(key)?.stream === stream) hintStreams.delete(key); });
+  stream.resume();
+}
+
+function destroyHints(infoHash: string) {
+  for (const [key, h] of hintStreams) {
+    if (key.startsWith(`${infoHash}:`)) { h.stream.destroy(); hintStreams.delete(key); }
+  }
 }
 
 function guessDurationSeconds(file: FileLike): number {
@@ -626,7 +686,7 @@ function findSubtitleFiles(torrent: TorrentLike, videoIdx: number): Subtitle[] {
     const url = `http://localhost:${STREAM_PORT}/sub/${torrent.infoHash}/${i}.vtt`;
     out.push({
       language: lang,
-      label: lang.toUpperCase() || f.name,
+      label: f.name || lang.toUpperCase(),
       url,
       format: fmt,
       sourceName: 'Embedded',
@@ -845,7 +905,8 @@ async function handleStream(
   const tMatch = /[?&]t=([0-9.]+)/.exec(req.url ?? '');
   const explicitStartSeconds = tMatch ? Math.max(0, parseFloat(tMatch[1])) : null;
 
-  console.log(
+  // Per-request (each Chromium seek / range) — dev only.
+  if (!app.isPackaged) console.log(
     `[stream] ${req.method} ${req.url} range=${req.headers.range ?? 'none'} ` +
     `mode=${remux ? 'remux' : 'passthrough'} audio=${sess?.selectedAudioTypeIdx ?? 0}`,
   );
@@ -873,13 +934,7 @@ async function handleStream(
   if (startSeconds > 0 && duration > 0 && size > 0) {
     const byte = Math.floor((startSeconds / duration) * size);
     const PREBUFFER = 4 * 1024 * 1024;
-    const end = Math.min(size - 1, byte + PREBUFFER - 1);
-    await new Promise<void>((resolve) => {
-      const s = file.createReadStream({ start: byte, end });
-      s.on('data', () => { /* drain */ });
-      s.on('end', () => resolve());
-      s.on('error', () => resolve());
-    });
+    await drainRange(file, byte, Math.min(size, byte + PREBUFFER));
   }
 
   res.writeHead(200, {
@@ -906,10 +961,10 @@ async function handleStream(
   const kill = () => { try { ff.kill('SIGKILL'); } catch { /* noop */ } };
   req.on('close', kill);
   ff.on('error', (err) => { console.warn('[ffmpeg] spawn failed', err); kill(); });
-  // TEMP DIAGNOSTIC: a non-zero exit while the client is still connected means
-  // the pipe closed early (e.g. zero-filled pieces at the seek point) — the
-  // renderer will see this as a spurious `ended`.
+  // A non-zero exit we didn't cause (we SIGKILL on client close / seek) means
+  // the pipe died early — the renderer sees a spurious `ended` and restarts.
   ff.on('close', (code, signal) => {
+    if (code === 0 || signal === 'SIGKILL') return;
     console.warn(
       `[ffmpeg] remux exit start=${startSeconds.toFixed(1)}s code=${code} ` +
       `signal=${signal} clientStillOpen=${!res.writableEnded}`,
@@ -942,7 +997,13 @@ async function handleSubtitle(res: ServerResponse, infoHash: string, fileIdx: nu
   }
 }
 
+// MKV-embedded subtitles are interleaved through the whole file, which is
+// usually only partly downloaded. Extraction reads /disk (downloaded pieces
+// only — never zero-filled gaps, never triggers downloads) and the renderer
+// asks for a window around the playhead (?from=&to=), so each request is
+// bounded and nothing incomplete gets cached.
 async function handleMkvSubtitle(
+  req: IncomingMessage,
   res: ServerResponse,
   infoHash: string,
   fileIdx: number,
@@ -961,44 +1022,96 @@ async function handleMkvSubtitle(
     res.end('subtitle stream not extractable');
     return;
   }
-  const cached = sess.mkvSubCache.get(streamTypeIdx);
-  if (cached !== undefined) {
-    res.writeHead(200, {
-      'Content-Type': 'text/vtt; charset=utf-8',
-      'Access-Control-Allow-Origin': '*',
-      'Cache-Control': 'public, max-age=3600',
-    });
-    res.end(cached);
-    return;
-  }
+  const q = new URL(req.url ?? '', STREAM_BASE_URL).searchParams;
+  const from = Number(q.get('from'));
+  const to = Number(q.get('to'));
+  const window = q.has('from') && q.has('to') && from >= 0 && to > from ? { from, to } : undefined;
 
-  const ff = spawnSubtitleExtract(sess.filePath, streamTypeIdx);
+  const ff = spawnSubtitleExtract(
+    `http://localhost:${STREAM_PORT}/disk/${infoHash}/${fileIdx}`,
+    streamTypeIdx,
+    window,
+  );
+  // Bounded work, but still shouldn't compete with playback for CPU.
+  try { if (ff.pid) setPriority(ff.pid, 10); } catch { /* best-effort */ }
+  req.on('close', () => { if (!res.writableEnded) ff.kill('SIGKILL'); });
   const chunks: Buffer[] = [];
   ff.stdout.on('data', (c: Buffer) => chunks.push(c));
   ff.stderr.on('data', (c: Buffer) => {
+    // A read stopping at the first missing piece is expected, not an error.
     const s = c.toString().trim();
-    if (s) console.log(`[ffmpeg-sub] ${s}`);
+    if (s && !/Stream ends prematurely|Read error/.test(s)) console.log(`[ffmpeg-sub] ${s}`);
   });
   ff.on('close', (code) => {
+    if (res.writableEnded) return;
     if (code !== 0 && chunks.length === 0) {
       res.writeHead(500);
       res.end('subtitle extract failed');
       return;
     }
-    const vtt = Buffer.concat(chunks).toString('utf8');
-    sess.mkvSubCache.set(streamTypeIdx, vtt);
     res.writeHead(200, {
       'Content-Type': 'text/vtt; charset=utf-8',
       'Access-Control-Allow-Origin': '*',
-      'Cache-Control': 'public, max-age=3600',
+      'Cache-Control': 'no-store',
     });
-    res.end(vtt);
+    res.end(Buffer.concat(chunks));
   });
   ff.on('error', (err) => {
     console.warn('[ffmpeg-sub] spawn failed', err);
+    if (res.writableEnded) return;
     res.writeHead(500);
     res.end('subtitle extract spawn failed');
   });
+}
+
+// On-disk bytes of a torrent file, limited to pieces we actually have: a
+// range response is cut at the first missing piece, and a request starting
+// on a missing piece gets headers then an immediate close. ffmpeg reads both
+// as EOF without losing the file size (a 416 makes it forget the size and
+// break seeking). Verified against ffmpeg 6 with a gapped MKV.
+async function handleDisk(
+  req: IncomingMessage,
+  res: ServerResponse,
+  infoHash: string,
+  fileIdx: number,
+) {
+  const t = await getTorrent(infoHash);
+  const file = t ? fileFor(t, fileIdx) : null;
+  const sess = sessions.get(infoHash);
+  if (!file || !sess || sess.fileIdx !== fileIdx) {
+    res.writeHead(404);
+    res.end('not found');
+    return;
+  }
+  const size: number = file.length;
+  const range = parseRange(req.headers.range, size) ?? { start: 0, end: size - 1 };
+  const pieceLen: number = t.pieceLength;
+  const offset: number = file.offset ?? 0;
+  const firstPiece = Math.floor((offset + range.start) / pieceLen);
+  const lastPiece = Math.floor((offset + range.end) / pieceLen);
+  let p = firstPiece;
+  while (p <= lastPiece && t.bitfield?.get(p)) p++;
+  if (p === firstPiece) {
+    res.writeHead(206, {
+      'Content-Range': `bytes ${range.start}-${range.end}/${size}`,
+      'Content-Length': range.end - range.start + 1,
+      'Accept-Ranges': 'bytes',
+    });
+    res.flushHeaders();
+    res.destroy();
+    return;
+  }
+  const end = Math.min(range.end, p * pieceLen - offset - 1);
+  res.writeHead(206, {
+    'Content-Range': `bytes ${range.start}-${end}/${size}`,
+    'Content-Length': end - range.start + 1,
+    'Accept-Ranges': 'bytes',
+    'Content-Type': 'application/octet-stream',
+  });
+  const stream = createReadStream(sess.filePath, { start: range.start, end });
+  stream.on('error', () => res.destroy());
+  stream.pipe(res);
+  req.on('close', () => stream.destroy());
 }
 
 export function startStreamServer(): Server {
@@ -1018,6 +1131,11 @@ export function startStreamServer(): Server {
       void handleRaw(req, res, m[1].toLowerCase(), parseInt(m[2], 10));
       return;
     }
+    m = /^\/disk\/([a-f0-9]+)\/(\d+)/i.exec(url);
+    if (m) {
+      void handleDisk(req, res, m[1].toLowerCase(), parseInt(m[2], 10));
+      return;
+    }
     m = /^\/stream\/([a-f0-9]+)\/(\d+)/i.exec(url);
     if (m) {
       void handleStream(req, res, m[1].toLowerCase(), parseInt(m[2], 10));
@@ -1025,7 +1143,7 @@ export function startStreamServer(): Server {
     }
     m = /^\/mkvsub\/([a-f0-9]+)\/(\d+)\/(\d+)\.vtt/i.exec(url);
     if (m) {
-      void handleMkvSubtitle(res, m[1].toLowerCase(), parseInt(m[2], 10), parseInt(m[3], 10));
+      void handleMkvSubtitle(req, res, m[1].toLowerCase(), parseInt(m[2], 10), parseInt(m[3], 10));
       return;
     }
     m = /^\/sub\/([a-f0-9]+)\/(\d+)\.vtt/i.exec(url);

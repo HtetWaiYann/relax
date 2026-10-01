@@ -110,23 +110,24 @@ export function Watch() {
         magnetUri={state.magnetUri}
         posterUrl={state.posterUrl}
         onBack={() => navigate(-1)}
+        // No backdrop-blur here or on the picker scrim: blurring over a
+        // playing video re-runs the blur on every frame.
+        headerAction={isTV && (
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            className="flex cursor-pointer items-center gap-1.5 rounded-md bg-black/60 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-black/80"
+          >
+            <Layers className="h-3.5 w-3.5" />
+            S{state.season} · E{state.episode}
+          </button>
+        )}
       />
-
-      {isTV && (
-        <button
-          type="button"
-          onClick={() => setPickerOpen(true)}
-          className="fixed right-4 top-4 z-[60] flex cursor-pointer items-center gap-1.5 rounded-md bg-black/60 px-3 py-1.5 text-xs font-medium text-white backdrop-blur transition hover:bg-black/80"
-        >
-          <Layers className="h-3.5 w-3.5" />
-          S{state.season} · E{state.episode}
-        </button>
-      )}
 
       {pickerOpen && (
         <div className="fixed inset-0 z-[70]">
           <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            className="absolute inset-0 bg-black/70"
             onClick={() => setPickerOpen(false)}
           />
           <div className="absolute right-0 top-0 h-full w-[460px] bg-surface-elevated shadow-2xl">

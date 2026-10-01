@@ -60,6 +60,20 @@ export function useVideoPlayback({
   // stop persisting. Bump if false-positives on short content; lower if people
   // complain that long credits keep titles in Continue Watching.
   const finishedRef = useRef<boolean>(false);
+  // Latest "save progress now" closure from the media-event effect, so pause
+  // and unmount can flush without waiting for the 10s throttle.
+  const persistRef = useRef<(() => void) | null>(null);
+  const mountedVideoRef = useRef<HTMLVideoElement | null>(null);
+  // Seeks are debounced: a seek-bar drag or a held arrow key would otherwise
+  // spawn one ffmpeg pipe (remux) or one position hint per event.
+  const seekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Remux: true from a seek until the new pipe can play. The old pipe keeps
+  // emitting timeupdate meanwhile, which would show/persist a bogus position.
+  const seekPendingRef = useRef<boolean>(false);
+  // Premature remux `ended` recovery: where the last one happened + how many
+  // times in a row the pipe died at roughly that spot.
+  const earlyEndRef = useRef<{ at: number; count: number }>({ at: -1, count: 0 });
+  useEffect(() => () => { if (seekTimerRef.current) clearTimeout(seekTimerRef.current); }, []);
 
   // The currently-served stream URL. Starts at the prop, replaced when the
   // audio track changes or the user seeks in remux mode (the main process
@@ -104,11 +118,13 @@ export function useVideoPlayback({
       const v = videoRef.current;
       if (!v) return;
       const clamped = Math.max(0, Math.min(effectiveDuration || t, t));
-      setStreamPosition(infoHash, fileIdx, clamped);
+      if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
       if (needsRemux) {
         // Remux mode: each seek is a fresh ffmpeg invocation. Swap src to
         // /stream/.../?t={clamped} and re-anchor the display offset; the new
-        // stream itself starts at currentTime=0.
+        // stream itself starts at currentTime=0. The UI moves immediately;
+        // the pipe swap waits until the seeking settles.
+        seekPendingRef.current = true;
         setSeekOffsetSeconds(clamped);
         setCurrentTime(0);
         setBufferedEnd(0);
@@ -116,12 +132,25 @@ export function useVideoPlayback({
         // emptied→loadstart→canplay), so force the buffering pill on until
         // canplay clears it.
         setReBuffering(true);
-        void seekStreamUrl(infoHash, fileIdx, clamped).then((url) => {
-          if (url) setStreamUrl(url);
-        });
+        seekTimerRef.current = setTimeout(() => {
+          seekTimerRef.current = null;
+          setStreamPosition(infoHash, fileIdx, clamped);
+          void seekStreamUrl(infoHash, fileIdx, clamped).then((url) => {
+            if (url) setStreamUrl(url);
+          });
+        }, 300);
         return;
       }
+      // Passthrough: Chromium cancels superseded seeks itself; only the
+      // engine hint needs debouncing. Move the playhead now — the next
+      // timeupdate only arrives once the seek has completed, which on an
+      // undownloaded range can take seconds.
       v.currentTime = clamped;
+      setCurrentTime(clamped);
+      seekTimerRef.current = setTimeout(() => {
+        seekTimerRef.current = null;
+        setStreamPosition(infoHash, fileIdx, clamped);
+      }, 150);
     },
     [infoHash, fileIdx, needsRemux, effectiveDuration],
   );
@@ -130,23 +159,60 @@ export function useVideoPlayback({
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    // TEMP DIAGNOSTIC
-    console.debug('[video] effect SUBSCRIBE', { src: v.currentSrc, paused: v.paused });
+    mountedVideoRef.current = v;
+
+    // In remux mode v.duration is NaN/Infinity (live pipe) or only the
+    // remaining part from the seek point — the probe duration is the truth.
+    const durationNow = () =>
+      effectiveDuration || (Number.isFinite(v.duration) ? v.duration : 0);
+    const saveProgress = (positionSeconds: number, durationSeconds: number) => {
+      // The backend ignores updates without a real duration.
+      if (!magnetUri || tmdbId <= 0 || durationSeconds <= 0) return;
+      void relaxClient.upsertWatchProgress({
+        progress: {
+          mediaId: String(tmdbId),
+          mediaType,
+          title,
+          posterUrl: posterUrl ?? '',
+          season,
+          episode,
+          positionSeconds,
+          durationSeconds,
+          infoHash,
+          fileIdx,
+          magnetUri,
+        },
+      }).catch(() => {});
+    };
+    // Mark watched (position = duration) instead of deleting — keeps a ✓
+    // record for the episode picker. Ratio 1.0 stays out of Continue
+    // Watching (backend hides rows past FinishedRatio = 0.97).
+    const markFinished = () => {
+      if (!magnetUri || tmdbId <= 0) return;
+      finishedRef.current = true;
+      const dur = durationNow();
+      saveProgress(dur, dur);
+      // Tell the engine to wipe the cached files on stop (next navigate-back).
+      void markCacheFinished(infoHash);
+    };
+    const persistNow = () => {
+      if (finishedRef.current || seekPendingRef.current) return;
+      const dur = durationNow();
+      if (dur <= 0) return;
+      const abs = v.currentTime + seekOffsetSeconds;
+      if (abs / dur >= 0.9) markFinished();
+      else saveProgress(abs, dur);
+    };
+    persistRef.current = persistNow;
 
     const onPlay = () => setPlaying(true);
     const onPause = () => {
-      // TEMP DIAGNOSTIC
-      console.warn('[video] PAUSE event', {
-        readyState: v.readyState,
-        networkState: v.networkState,
-        ended: v.ended,
-        currentTime: v.currentTime,
-        currentSrc: v.currentSrc,
-      });
       setPlaying(false);
       setShowControls(true);
+      persistNow();
     };
     const onTime = () => {
+      if (seekPendingRef.current) return;
       setCurrentTime(v.currentTime);
       const now = performance.now();
       if (now - positionThrottle.current > 1500) {
@@ -155,91 +221,31 @@ export function useVideoPlayback({
         // remux mode v.currentTime is local to the current pipe.
         setStreamPosition(infoHash, fileIdx, v.currentTime + seekOffsetSeconds);
       }
-      // Persist watch progress every 10s. Only after metadata lands and we
-      // have a real duration — the backend ignores updates without one.
-      if (
-        magnetUri &&
-        tmdbId > 0 &&
-        v.duration > 0 &&
-        now - persistThrottle.current > 10_000
-      ) {
+      if (now - persistThrottle.current > 10_000) {
         persistThrottle.current = now;
-        const abs = v.currentTime + seekOffsetSeconds;
-        const dur = effectiveDuration || v.duration;
-        if (!finishedRef.current && abs / dur >= 0.9) {
-          finishedRef.current = true;
-          // Mark watched (position = duration) instead of deleting — keeps a ✓
-          // record for the episode picker. Ratio 1.0 stays out of Continue
-          // Watching (backend hides rows past FinishedRatio = 0.97).
-          void relaxClient.upsertWatchProgress({
-            progress: {
-              mediaId: String(tmdbId),
-              mediaType,
-              title,
-              posterUrl: posterUrl ?? '',
-              season,
-              episode,
-              positionSeconds: dur,
-              durationSeconds: dur,
-              infoHash,
-              fileIdx,
-              magnetUri,
-            },
-          }).catch(() => {});
-          // Tell the engine to wipe the cached files on stop (next navigate-back).
-          void markCacheFinished(infoHash);
-        } else if (!finishedRef.current) {
-          void relaxClient.upsertWatchProgress({
-            progress: {
-              mediaId: String(tmdbId),
-              mediaType,
-              title,
-              posterUrl: posterUrl ?? '',
-              season,
-              episode,
-              positionSeconds: abs,
-              durationSeconds: v.duration,
-              infoHash,
-              fileIdx,
-              magnetUri,
-            },
-          }).catch(() => {});
-        }
+        persistNow();
       }
     };
     const onEnded = () => {
-      // TEMP DIAGNOSTIC: distinguish a real end from a premature remux-pipe
-      // close. If displayTime is far below effectiveDuration, ffmpeg died early
-      // and this `ended` is spurious (we're wrongly marking the title watched).
-      console.warn('[video] ENDED event', {
-        currentTime: v.currentTime,
-        localDuration: v.duration,
-        seekOffsetSeconds,
-        displayTime: v.currentTime + seekOffsetSeconds,
-        effectiveDuration,
-        bufferedEnd: v.buffered.length ? v.buffered.end(v.buffered.length - 1) : 0,
-        needsRemux,
-      });
-      if (tmdbId > 0 && magnetUri) {
-        finishedRef.current = true;
-        const dur = effectiveDuration || v.duration;
-        void relaxClient.upsertWatchProgress({
-          progress: {
-            mediaId: String(tmdbId),
-            mediaType,
-            title,
-            posterUrl: posterUrl ?? '',
-            season,
-            episode,
-            positionSeconds: dur,
-            durationSeconds: dur,
-            infoHash,
-            fileIdx,
-            magnetUri,
-          },
-        }).catch(() => {});
-        void markCacheFinished(infoHash);
+      const abs = v.currentTime + seekOffsetSeconds;
+      const dur = durationNow();
+      // A remux pipe that closes well before the real end (ffmpeg hit a
+      // zero-filled piece, socket hiccup) fires a spurious `ended`. Restart
+      // the pipe from here instead of marking the title watched; give up
+      // after 3 deaths within ~5s of each other.
+      if (needsRemux && dur > 0 && abs < dur * 0.9) {
+        const last = earlyEndRef.current;
+        const count = Math.abs(abs - last.at) < 5 ? last.count + 1 : 1;
+        earlyEndRef.current = { at: abs, count };
+        console.warn('[video] remux pipe ended early', { abs, dur, count });
+        if (count <= 3) {
+          seekTo(abs);
+          return;
+        }
+        setVideoError('Stream ended unexpectedly. Try seeking ahead or a different source.');
+        return;
       }
+      markFinished();
     };
     const onDuration = () => setDuration(v.duration || 0);
     const onProgress = () => {
@@ -256,22 +262,10 @@ export function useVideoPlayback({
     };
     const onWait = () => setReBuffering(true);
     const onCanPlay = () => {
+      seekPendingRef.current = false;
       setReBuffering(false);
       setAudioSwitching(false);
       decodeRetryRef.current = 0;
-      // ponytail: chromium-only counters. If audioBytesDecoded stays 0 while
-      // videoBytesDecoded climbs, the audio codec isn't being decoded (likely
-      // EAC3/DTS/TrueHD passthrough). Swap to a probed track or enable remux.
-      const ext = v as HTMLVideoElement & {
-        webkitAudioDecodedByteCount?: number;
-        webkitVideoDecodedByteCount?: number;
-      };
-      console.info('[audio] canplay', {
-        muted: v.muted,
-        volume: v.volume,
-        audioBytesDecoded: ext.webkitAudioDecodedByteCount ?? 0,
-        videoBytesDecoded: ext.webkitVideoDecodedByteCount ?? 0,
-      });
     };
     const onVolume = () => {
       setVolume(v.volume);
@@ -280,20 +274,6 @@ export function useVideoPlayback({
     const onRate = () => setRate(v.playbackRate);
     const onMeta = () => {
       setDuration(v.duration || 0);
-      const ext = v as HTMLVideoElement & {
-        webkitAudioDecodedByteCount?: number;
-        webkitVideoDecodedByteCount?: number;
-        audioTracks?: { length: number };
-      };
-      console.info('[audio] loadedmetadata', {
-        src: v.currentSrc,
-        duration: v.duration,
-        muted: v.muted,
-        volume: v.volume,
-        elementAudioTrackCount: ext.audioTracks?.length ?? 0,
-        audioBytesDecoded: ext.webkitAudioDecodedByteCount ?? 0,
-        videoBytesDecoded: ext.webkitVideoDecodedByteCount ?? 0,
-      });
       // Decode-retry path: restore the failed timestamp before play resumes.
       if (retrySeekRef.current !== null) {
         try { v.currentTime = retrySeekRef.current; } catch { /* noop */ }
@@ -313,10 +293,7 @@ export function useVideoPlayback({
       }
       // After a src swap (audio change / remux seek), keep playing.
       if (v.paused) {
-        // TEMP DIAGNOSTIC
-        v.play()
-          .then(() => console.info('[video] play() after meta OK'))
-          .catch((e) => console.warn('[video] play() after meta REJECTED', e?.name, e?.message));
+        v.play().catch((e) => console.warn('[video] play() after meta rejected', e?.name, e?.message));
       }
     };
     const onError = () => {
@@ -361,8 +338,6 @@ export function useVideoPlayback({
     v.addEventListener('ended', onEnded);
     v.addEventListener('error', onError);
     return () => {
-      // TEMP DIAGNOSTIC
-      console.debug('[video] effect UNSUBSCRIBE');
       v.removeEventListener('play', onPlay);
       v.removeEventListener('pause', onPause);
       v.removeEventListener('timeupdate', onTime);
@@ -385,14 +360,16 @@ export function useVideoPlayback({
 
   // Release the video element on unmount: drop the HTTP connection to the
   // local stream server, otherwise the open socket lingers until the next GC.
-  useEffect(() => {
-    const v = videoRef.current;
-    return () => {
-      if (!v) return;
-      // TEMP DIAGNOSTIC
-      console.warn('[video] TEARDOWN — pause + removeAttribute(src) + load()');
-      try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* noop */ }
-    };
+  // The <video> mounts only after the initial buffer, so it's read from
+  // mountedVideoRef (set by the event effect) — videoRef is already null by
+  // the time unmount cleanups run.
+  useEffect(() => () => {
+    const v = mountedVideoRef.current;
+    if (!v) return;
+    // Flush progress before tearing down — otherwise leaving loses up to
+    // the 10s persist throttle.
+    persistRef.current?.();
+    try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* noop */ }
   }, []);
 
   const setPlaybackRate = useCallback((r: number) => {

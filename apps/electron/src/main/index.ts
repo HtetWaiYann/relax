@@ -4,12 +4,29 @@ import { dirname, join } from 'node:path';
 import process from 'node:process';
 import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { registerTorrentIpc, shutdownTorrentSubsystem, startStreamServer, STREAM_BASE_URL } from './torrent';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const RENDERER_DEV_URL = process.env['ELECTRON_RENDERER_URL'];
 const isDev = !!RENDERER_DEV_URL;
+
+// The torrent engine and the local stream server share this thread, so a
+// stall here delays bytes to <video> (rebuffering). Dev-only probe: warns when
+// p99 delay over a 10s window passes 50ms — if that shows up while streaming,
+// move the engine into a utilityProcess.
+if (isDev) {
+  const loopDelay = monitorEventLoopDelay({ resolution: 20 });
+  loopDelay.enable();
+  setInterval(() => {
+    const p99 = loopDelay.percentile(99) / 1e6;
+    if (p99 > 50) {
+      console.warn(`[main] event-loop delay p99=${p99.toFixed(0)}ms max=${(loopDelay.max / 1e6).toFixed(0)}ms`);
+    }
+    loopDelay.reset();
+  }, 10_000).unref();
+}
 // Populated by startBackendSidecar() in packaged mode; falls back to the
 // dev-time default when an external `pnpm dev` backend is running.
 let BACKEND_URL = process.env['BACKEND_URL'] ?? 'http://localhost:8080';
@@ -101,9 +118,13 @@ function createWindow() {
   win.webContents.on('render-process-gone', (_event, details) => {
     console.error('[electron] render-process-gone', details);
   });
-  win.webContents.on('console-message', (_event, _level, message, line, sourceId) => {
-    console.log(`[renderer] ${sourceId}:${line} ${message}`);
-  });
+  // Dev convenience: mirror renderer logs into the terminal. Packaged builds
+  // have no terminal, so don't pay for it there.
+  if (isDev) {
+    win.webContents.on('console-message', (_event, _level, message, line, sourceId) => {
+      console.log(`[renderer] ${sourceId}:${line} ${message}`);
+    });
+  }
 
   win.once('ready-to-show', () => {
     win.show();

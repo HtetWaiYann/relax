@@ -1,17 +1,78 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { ConnectError, Code } from '@connectrpc/connect';
 import { type MediaType } from '@relax/types';
 import {
   activeCueAt,
   loadSubtitleStyle,
+  parseVtt,
   saveSubtitleStyle,
   srtToVtt,
   useParsedVtt,
   type SubtitleStyle,
+  type VttCue,
 } from '../../../lib/subtitle';
 import { getStreamSubtitles, type SubtitleTrack } from '../../../lib/torrent';
 import { relaxClient } from '../../../lib/client';
 import { isEnglish, type PanelKind, type TrackLoadState } from '../types';
+
+// MKV-embedded cues come from a partly downloaded file, so the server only
+// extracts a window (see handleMkvSubtitle in main/torrent.ts). Ask for one
+// around the playhead after each seek / src swap and every 30s while playing,
+// and merge — pieces downloaded since the last request fill in.
+const MKV_WINDOW_BEHIND_S = 10;
+const MKV_WINDOW_AHEAD_S = 60;
+const MKV_POLL_MS = 30_000;
+function useWindowedVtt(
+  url: string | null,
+  videoRef: RefObject<HTMLVideoElement | null>,
+  seekOffsetSeconds: number,
+): VttCue[] {
+  const [cues, setCues] = useState<VttCue[]>([]);
+  // Read through a ref: a remux seek changes the offset before the new pipe
+  // starts, so the load is triggered by canplay rather than by this value.
+  const offsetRef = useRef(seekOffsetSeconds);
+  useEffect(() => { offsetRef.current = seekOffsetSeconds; }, [seekOffsetSeconds]);
+  useEffect(() => {
+    setCues([]);
+    const v = videoRef.current;
+    if (!url || !v) return;
+    let cancelled = false;
+    let inflight = false;
+    let again = false;
+    const byKey = new Map<string, VttCue>();
+    const load = async () => {
+      if (inflight) { again = true; return; }
+      inflight = true;
+      const t = v.currentTime + offsetRef.current;
+      const from = Math.max(0, t - MKV_WINDOW_BEHIND_S).toFixed(1);
+      const to = (t + MKV_WINDOW_AHEAD_S).toFixed(1);
+      try {
+        const r = await fetch(`${url}?from=${from}&to=${to}`);
+        if (r.ok && !cancelled) {
+          const parsed = parseVtt(await r.text());
+          if (!cancelled && parsed.length > 0) {
+            for (const c of parsed) byKey.set(`${Math.round(c.start * 10)}|${c.text}`, c);
+            setCues([...byKey.values()].sort((a, b) => a.start - b.start));
+          }
+        }
+      } catch { /* the next poll retries */ }
+      inflight = false;
+      if (again && !cancelled) { again = false; void load(); }
+    };
+    const onEvent = () => void load();
+    void load();
+    const id = setInterval(() => { if (!v.paused) void load(); }, MKV_POLL_MS);
+    v.addEventListener('seeked', onEvent); // passthrough seek
+    v.addEventListener('canplay', onEvent); // remux seek / audio switch (src swap)
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      v.removeEventListener('seeked', onEvent);
+      v.removeEventListener('canplay', onEvent);
+    };
+  }, [url, videoRef]);
+  return cues;
+}
 
 // All subtitle state and side effects: track discovery (embedded + external
 // providers + probe-gated MKV), selection/lazy-download, local file loading,
@@ -25,7 +86,8 @@ export function useSubtitles({
   mediaType,
   season,
   episode,
-  displayTime,
+  videoRef,
+  seekOffsetSeconds,
   showToast,
   setPanel,
 }: {
@@ -37,7 +99,8 @@ export function useSubtitles({
   mediaType: MediaType;
   season: number;
   episode: number;
-  displayTime: number;
+  videoRef: RefObject<HTMLVideoElement | null>;
+  seekOffsetSeconds: number;
   showToast: (msg: string) => void;
   setPanel: (p: PanelKind) => void;
 }) {
@@ -52,14 +115,38 @@ export function useSubtitles({
   const activeTrackUrl = selectedTrack >= 0 && !trackState.get(selectedTrack)
     ? (tracks[selectedTrack]?.url || null)
     : null;
-  const cues = useParsedVtt(activeTrackUrl);
+  const isMkvTrack = tracks[selectedTrack]?.sourceName === 'Embedded (MKV)';
+  const fileCues = useParsedVtt(isMkvTrack ? null : activeTrackUrl);
+  const mkvCues = useWindowedVtt(isMkvTrack ? activeTrackUrl : null, videoRef, seekOffsetSeconds);
+  const cues = isMkvTrack ? mkvCues : fileCues;
   // Match cues against the true source-file position. In remux mode the
   // <video> element's currentTime is pipe-local (resets to 0 after a seek),
-  // so displayTime (= currentTime + seekOffsetSeconds) is the correct clock.
-  const activeCue = useMemo(
-    () => activeCueAt(cues, displayTime - subOffsetMs / 1000),
-    [cues, displayTime, subOffsetMs],
-  );
+  // so add seekOffsetSeconds. Resolved per video frame — timeupdate only
+  // fires ~4 Hz, which showed/hid cues up to ~250ms late. seeked/timeupdate
+  // cover the paused case (no frames are presented while paused).
+  const [activeCue, setActiveCue] = useState<VttCue | null>(null);
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || cues.length === 0) {
+      setActiveCue(null);
+      return;
+    }
+    let last: VttCue | null | undefined;
+    const update = () => {
+      const c = activeCueAt(cues, v.currentTime + seekOffsetSeconds - subOffsetMs / 1000);
+      if (c !== last) { last = c; setActiveCue(c); }
+    };
+    let frameId = 0;
+    const onFrame = () => { update(); frameId = v.requestVideoFrameCallback(onFrame); };
+    onFrame();
+    v.addEventListener('seeked', update);
+    v.addEventListener('timeupdate', update);
+    return () => {
+      v.cancelVideoFrameCallback(frameId);
+      v.removeEventListener('seeked', update);
+      v.removeEventListener('timeupdate', update);
+    };
+  }, [videoRef, cues, seekOffsetSeconds, subOffsetMs]);
 
   // Reset offset when the user picks a different track — calibration is per-track.
   useEffect(() => {

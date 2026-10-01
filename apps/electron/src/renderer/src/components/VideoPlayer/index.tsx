@@ -43,7 +43,7 @@ import { useWheelVolume } from './hooks/useWheelVolume';
 export function VideoPlayer(props: VideoPlayerProps) {
   const {
     infoHash, fileIdx, streamUrl: initialStreamUrl, title, subtitle, quality, sourceLabel,
-    tmdbId, mediaType, season, episode, resumeSeconds, magnetUri, posterUrl, onBack,
+    tmdbId, mediaType, season, episode, resumeSeconds, magnetUri, posterUrl, onBack, headerAction,
   } = props;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -121,7 +121,8 @@ export function VideoPlayer(props: VideoPlayerProps) {
     mediaType,
     season,
     episode,
-    displayTime,
+    videoRef,
+    seekOffsetSeconds,
     showToast,
     setPanel,
   });
@@ -276,6 +277,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
             </span>
           )}
         </div>
+        {headerAction && <div className="pointer-events-auto">{headerAction}</div>}
       </header>
 
       {(reBuffering || audioSwitching) && initialBufferReady && (
@@ -286,8 +288,8 @@ export function VideoPlayer(props: VideoPlayerProps) {
 
       {toast && (
         <div className="pointer-events-auto absolute right-4 top-4 z-40 flex items-center gap-2 rounded-lg bg-black/80 px-3 py-2 text-sm text-neutral-100 shadow-2xl ring-1 ring-white/10">
-          <Check className="h-4 w-4 text-accent" />
-          <span>{toast}</span>
+          <Check className="h-4 w-4 shrink-0 text-accent" />
+          <span className="max-w-md [overflow-wrap:anywhere]">{toast}</span>
           <button
             type="button"
             onClick={() => setToast(null)}
@@ -423,7 +425,10 @@ export function VideoPlayer(props: VideoPlayerProps) {
             aria-label="Subtitles"
           >
             <Subtitles className="h-4 w-4" />
-            <span>
+            <span
+              className="max-w-48 truncate"
+              title={selectedTrack >= 0 ? tracks[selectedTrack]?.label : undefined}
+            >
               {selectedTrack >= 0 ? tracks[selectedTrack]?.label ?? 'On' : 'Off'}
             </span>
           </button>
