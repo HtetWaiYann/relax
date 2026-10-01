@@ -11,6 +11,7 @@ import (
 	relaxv1 "relax/gen/relax/v1"
 	"relax/gen/relax/v1/relaxv1connect"
 	"relax/internal/metadata"
+	"relax/internal/sports"
 	"relax/internal/storage"
 	"relax/internal/streams"
 	"relax/internal/subtitles"
@@ -31,6 +32,9 @@ type RelaxServer struct {
 	subtitleCache string
 	port          int
 	store         storage.Store
+	fixtures      *sports.Fixtures
+	addon         *sports.Addon
+	liveProxy     *sports.Proxy
 }
 
 var _ relaxv1connect.RelaxServiceHandler = (*RelaxServer)(nil)

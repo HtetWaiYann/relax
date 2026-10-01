@@ -21,6 +21,13 @@ type Config struct {
 	OpenSubtitlesAPIKey string `env:"OPENSUBTITLES_API_KEY"`
 	WyzieAPIKey         string `env:"WYZIE_API_KEY"`
 	SubtitleCacheDir    string `env:"SUBTITLE_CACHE_DIR" envDefault:"./subtitle_cache"`
+	FootballDataAPIKey  string `env:"FOOTBALL_DATA_API_KEY"`
+	// SportsCompetitions is a comma-separated list of football-data.org
+	// competition codes (PL = Premier League, PD = La Liga).
+	SportsCompetitions string `env:"SPORTS_COMPETITIONS" envDefault:"PL,PD"`
+	// SportsAddonURL is a Stremio-protocol addon base (or manifest.json) URL
+	// used to find live streams for a match. Empty disables streams.
+	SportsAddonURL string `env:"SPORTS_ADDON_URL"`
 	// HistoryTTLDays caps watch_progress retention. 0 disables the startup
 	// cleanup; otherwise rows with last_watched_at older than this many days
 	// are deleted at backend init.

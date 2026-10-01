@@ -18,6 +18,7 @@ import (
 	"relax/internal/config"
 	"relax/internal/metadata"
 	"relax/internal/server"
+	"relax/internal/sports"
 	"relax/internal/storage"
 	"relax/internal/streams/torrentio"
 	"relax/internal/subtitles"
@@ -64,7 +65,9 @@ func run() error {
 	}
 	defer store.Close()
 
-	relaxSrv := server.NewRelaxServer(logger, meta, streamsProvider, subtitleProviders, cfg.SubtitleCacheDir, cfg.Port, store)
+	liveProxy := sports.NewProxy()
+	relaxSrv := server.NewRelaxServer(logger, meta, streamsProvider, subtitleProviders, cfg.SubtitleCacheDir, cfg.Port, store).
+		WithSports(sports.NewFixtures(cfg.FootballDataAPIKey, cfg.SportsCompetitions), sports.NewAddon(cfg.SportsAddonURL), liveProxy)
 	path, handler := relaxv1connect.NewRelaxServiceHandler(relaxSrv)
 
 	if err := os.MkdirAll(cfg.SubtitleCacheDir, 0o755); err != nil {
@@ -75,6 +78,7 @@ func run() error {
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
 	mux.Handle("/subtitles/", http.StripPrefix("/subtitles/", http.FileServer(http.Dir(cfg.SubtitleCacheDir))))
+	mux.Handle(sports.ProxyPrefix, liveProxy)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
