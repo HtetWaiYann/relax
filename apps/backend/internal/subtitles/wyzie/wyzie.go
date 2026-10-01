@@ -51,6 +51,7 @@ type wyzieResult struct {
 	Language string `json:"language"`
 	FileName string `json:"fileName"`
 	Release  string `json:"release"`
+	SDH      bool   `json:"isHearingImpaired"`
 }
 
 func (c *Client) Search(ctx context.Context, imdbID string, season, episode int32) ([]*relaxv1.SubtitleTrack, error) {
@@ -100,6 +101,9 @@ func (c *Client) Search(ctx context.Context, imdbID string, season, episode int3
 		// Display is just the language ("English") for every result, so
 		// prefer the file / release name — it's what tells tracks apart.
 		label := firstNonEmpty(r.FileName, r.Release, r.Display, strings.ToUpper(r.Language))
+		if r.SDH {
+			label += " · SDH"
+		}
 		tracks = append(tracks, &relaxv1.SubtitleTrack{
 			Language:   r.Language,
 			Label:      label,

@@ -40,6 +40,7 @@ type osSearchResponse struct {
 		Attributes struct {
 			Language string `json:"language"`
 			Release  string `json:"release"`
+			SDH      bool   `json:"hearing_impaired"`
 			Files    []struct {
 				FileID   int64  `json:"file_id"`
 				FileName string `json:"file_name"`
@@ -111,6 +112,9 @@ func (c *Client) Search(ctx context.Context, imdbID string, season, episode int3
 			} else {
 				seen[lang] = true
 			}
+		}
+		if item.Attributes.SDH {
+			label += " · SDH"
 		}
 		tracks = append(tracks, &relaxv1.SubtitleTrack{
 			Language:       lang,
