@@ -148,8 +148,13 @@ export function useSubtitles({
     };
   }, [videoRef, cues, seekOffsetSeconds, subOffsetMs]);
 
-  // Reset offset when the user picks a different track — calibration is per-track.
+  // Last real track picked — lets `c` turn subtitles back on. Offset resets
+  // only when a *different* track is picked (calibration is per-track), so
+  // toggling off/on keeps it.
+  const lastTrackRef = useRef(-1);
   useEffect(() => {
+    if (selectedTrack < 0 || selectedTrack === lastTrackRef.current) return;
+    lastTrackRef.current = selectedTrack;
     setSubOffsetMs(0);
   }, [selectedTrack]);
 
@@ -303,6 +308,18 @@ export function useSubtitles({
     void handleSelectTrack(idx);
   }, [tracks, handleSelectTrack]);
 
+  const toggleSubtitles = useCallback(() => {
+    if (selectedTrack >= 0) {
+      void handleSelectTrack(-1);
+      return;
+    }
+    const idx = lastTrackRef.current >= 0
+      ? lastTrackRef.current
+      : tracks.findIndex((t) => t.supported !== false);
+    if (idx >= 0) void handleSelectTrack(idx);
+    else showToast('No subtitles available');
+  }, [selectedTrack, tracks, handleSelectTrack, showToast]);
+
   return {
     tracks,
     selectedTrack,
@@ -314,5 +331,6 @@ export function useSubtitles({
     activeCue,
     handleSelectTrack,
     handleLoadLocalSubtitle,
+    toggleSubtitles,
   };
 }

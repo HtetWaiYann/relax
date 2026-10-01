@@ -31,10 +31,12 @@ import { SpeedPanel } from './components/SpeedPanel';
 import { StatsPanel } from './components/StatsPanel';
 import { SubtitlesPanel } from './components/SubtitlesPanel';
 import { VolumeControl } from './components/VolumeControl';
+import { useAudioFx } from './hooks/useAudioFx';
 import { useAudioTracks } from './hooks/useAudioTracks';
 import { useAutoHideControls } from './hooks/useAutoHideControls';
 import { useFullscreen } from './hooks/useFullscreen';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useMediaSession } from './hooks/useMediaSession';
 import { useSubtitles } from './hooks/useSubtitles';
 import { useToast } from './hooks/useToast';
 import { useVideoPlayback } from './hooks/useVideoPlayback';
@@ -112,6 +114,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
     activeCue,
     handleSelectTrack,
     handleLoadLocalSubtitle,
+    toggleSubtitles,
   } = useSubtitles({
     infoHash,
     fileIdx,
@@ -174,8 +177,32 @@ export function VideoPlayer(props: VideoPlayerProps) {
     togglePlay,
     toggleFullscreen,
     displayTime,
+    duration: effectiveDuration,
+    rate,
+    setPlaybackRate,
     setVolume,
     setMuted,
+    toggleSubtitles,
+    subOffsetMs,
+    setSubOffsetMs,
+    needsRemux,
+    showToast,
+  });
+
+  const { boost, night, setBoost, setNight } = useAudioFx(
+    videoRef,
+    !!streamUrl && initialBufferReady,
+  );
+
+  useMediaSession({
+    videoRef,
+    title,
+    subtitle,
+    posterUrl,
+    displayTime,
+    duration: effectiveDuration,
+    rate,
+    seekTo,
   });
 
   const { volumeHud } = useWheelVolume({ containerRef, videoRef, panel, wake });
@@ -197,6 +224,10 @@ export function VideoPlayer(props: VideoPlayerProps) {
       {streamUrl && initialBufferReady ? (
         <video
           ref={videoRef}
+          // Lets Web Audio read the stream for volume boost / night mode
+          // (silence otherwise); the stream server sends ACAO: *. Before src
+          // so it's in place when the load starts.
+          crossOrigin="anonymous"
           src={streamUrl}
           className="h-full w-full bg-black"
           autoPlay
@@ -337,6 +368,10 @@ export function VideoPlayer(props: VideoPlayerProps) {
         <SpeedPanel
           rate={rate}
           onSetRate={(r) => setPlaybackRate(r)}
+          boost={boost}
+          onSetBoost={setBoost}
+          night={night}
+          onSetNight={setNight}
           onClose={() => setPanel('none')}
         />
       )}
