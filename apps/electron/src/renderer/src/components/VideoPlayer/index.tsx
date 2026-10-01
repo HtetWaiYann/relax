@@ -113,6 +113,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
     activeCue,
     handleSelectTrack,
     handleLoadLocalSubtitle,
+    toggleSubtitles,
   } = useSubtitles({
     infoHash,
     fileIdx,
@@ -175,8 +176,16 @@ export function VideoPlayer(props: VideoPlayerProps) {
     togglePlay,
     toggleFullscreen,
     displayTime,
+    duration: effectiveDuration,
+    rate,
+    setPlaybackRate,
     setVolume,
     setMuted,
+    toggleSubtitles,
+    subOffsetMs,
+    setSubOffsetMs,
+    needsRemux,
+    showToast,
   });
 
   useMediaSession({
