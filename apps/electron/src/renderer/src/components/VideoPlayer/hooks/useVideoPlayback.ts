@@ -3,6 +3,23 @@ import { type MediaType } from '@relax/types';
 import { markCacheFinished, seekStreamUrl, setStreamPosition } from '../../../lib/torrent';
 import { relaxClient } from '../../../lib/client';
 
+// Volume / mute / speed survive across sessions. Per-viewer convenience, so
+// localStorage (same pattern as the subtitle style).
+const PREFS_KEY = 'relax.playerPrefs.v1';
+interface PlayerPrefs { volume: number; muted: boolean; rate: number }
+function loadPrefs(): PlayerPrefs {
+  const defaults: PlayerPrefs = { volume: 1, muted: false, rate: 1 };
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    return raw ? { ...defaults, ...(JSON.parse(raw) as Partial<PlayerPrefs>) } : defaults;
+  } catch {
+    return defaults;
+  }
+}
+function savePrefs(p: PlayerPrefs) {
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* storage disabled */ }
+}
+
 // The core <video> driver: playback state, the timeline (seek offset in remux
 // mode), the big media-event effect (progress persistence, decode-retry,
 // resume, teardown), and the seek/play/rate controls. Kept as one unit because
@@ -89,10 +106,11 @@ export function useVideoPlayback({
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(1);
-  const [muted, setMuted] = useState(false);
+  const [prefs] = useState(loadPrefs);
+  const [volume, setVolume] = useState(prefs.volume);
+  const [muted, setMuted] = useState(prefs.muted);
   const [bufferedEnd, setBufferedEnd] = useState(0);
-  const [rate, setRate] = useState(1);
+  const [rate, setRate] = useState(prefs.rate);
   const [reBuffering, setReBuffering] = useState(false);
   const [videoError, setVideoError] = useState<string | null>(null);
 
@@ -159,6 +177,12 @@ export function useVideoPlayback({
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
+    if (mountedVideoRef.current !== v) {
+      // First time we see this element: apply the remembered prefs.
+      v.volume = prefs.volume;
+      v.muted = prefs.muted;
+      v.defaultPlaybackRate = v.playbackRate = prefs.rate;
+    }
     mountedVideoRef.current = v;
 
     // In remux mode v.duration is NaN/Infinity (live pipe) or only the
@@ -270,8 +294,12 @@ export function useVideoPlayback({
     const onVolume = () => {
       setVolume(v.volume);
       setMuted(v.muted);
+      savePrefs({ volume: v.volume, muted: v.muted, rate: v.playbackRate });
     };
-    const onRate = () => setRate(v.playbackRate);
+    const onRate = () => {
+      setRate(v.playbackRate);
+      savePrefs({ volume: v.volume, muted: v.muted, rate: v.playbackRate });
+    };
     const onMeta = () => {
       setDuration(v.duration || 0);
       // Decode-retry path: restore the failed timestamp before play resumes.
@@ -355,7 +383,7 @@ export function useVideoPlayback({
   }, [
     infoHash, fileIdx, initialBufferReady, streamUrl,
     seekOffsetSeconds, magnetUri, tmdbId, mediaType, title, posterUrl,
-    season, episode, resumeSeconds, needsRemux, seekTo,
+    season, episode, resumeSeconds, needsRemux, seekTo, prefs,
   ]);
 
   // Release the video element on unmount: drop the HTTP connection to the
@@ -375,7 +403,9 @@ export function useVideoPlayback({
   const setPlaybackRate = useCallback((r: number) => {
     const v = videoRef.current;
     if (!v) return;
-    v.playbackRate = r;
+    // load() (every remux seek / audio switch swaps src) resets playbackRate
+    // to defaultPlaybackRate — set both so the speed sticks.
+    v.defaultPlaybackRate = v.playbackRate = r;
   }, []);
 
   return {
