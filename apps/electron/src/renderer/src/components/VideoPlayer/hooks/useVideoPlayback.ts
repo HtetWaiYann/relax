@@ -142,8 +142,11 @@ export function useVideoPlayback({
         return;
       }
       // Passthrough: Chromium cancels superseded seeks itself; only the
-      // engine hint needs debouncing.
+      // engine hint needs debouncing. Move the playhead now — the next
+      // timeupdate only arrives once the seek has completed, which on an
+      // undownloaded range can take seconds.
       v.currentTime = clamped;
+      setCurrentTime(clamped);
       seekTimerRef.current = setTimeout(() => {
         seekTimerRef.current = null;
         setStreamPosition(infoHash, fileIdx, clamped);
