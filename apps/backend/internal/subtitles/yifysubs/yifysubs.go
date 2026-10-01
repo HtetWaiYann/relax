@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"regexp"
@@ -56,8 +57,18 @@ func (c *Client) Name() string { return "yifysubs" }
 var (
 	rowRe  = regexp.MustCompile(`(?s)<tr[^>]*>(.*?)</tr>`)
 	langRe = regexp.MustCompile(`<span class="sub-lang">([^<]+)</span>`)
-	linkRe = regexp.MustCompile(`<a[^>]+href="(/subtitles/[^"]+)"`)
+	linkRe = regexp.MustCompile(`(?s)<a[^>]+href="(/subtitles/[^"]+)"[^>]*>(.*?)</a>`)
+	// The link text is `<span class="text-muted">subtitle</span> {release}`.
+	spanRe = regexp.MustCompile(`(?s)<span[^>]*>.*?</span>`)
+	tagRe  = regexp.MustCompile(`<[^>]+>`)
 )
+
+// releaseName pulls the release name out of a result link's inner HTML.
+func releaseName(linkHTML []byte) string {
+	s := spanRe.ReplaceAllString(string(linkHTML), "")
+	s = tagRe.ReplaceAllString(s, "")
+	return strings.Join(strings.Fields(html.UnescapeString(s)), " ")
+}
 
 func (c *Client) Search(ctx context.Context, imdbID string, season, episode int32) ([]*relaxv1.SubtitleTrack, error) {
 	// YIFYSubs is movie-only — TV episodes get a clean skip, not an error.
@@ -89,9 +100,13 @@ func (c *Client) Search(ctx context.Context, imdbID string, season, episode int3
 		}
 		seen[lang] = true
 		detailURL := c.endpoint + string(linkMatch[1])
+		label := releaseName(linkMatch[2])
+		if label == "" {
+			label = displayLang(lang)
+		}
 		tracks = append(tracks, &relaxv1.SubtitleTrack{
 			Language:       langCode(lang),
-			Label:          displayLang(lang),
+			Label:          label,
 			Format:         "srt",
 			SourceName:     "YIFYSubs",
 			TrackReference: subtitles.PrefixRef("yifysubs", detailURL),

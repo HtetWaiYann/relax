@@ -49,6 +49,8 @@ type wyzieResult struct {
 	Format   string `json:"format"`
 	Display  string `json:"display"`
 	Language string `json:"language"`
+	FileName string `json:"fileName"`
+	Release  string `json:"release"`
 }
 
 func (c *Client) Search(ctx context.Context, imdbID string, season, episode int32) ([]*relaxv1.SubtitleTrack, error) {
@@ -95,10 +97,9 @@ func (c *Client) Search(ctx context.Context, imdbID string, season, episode int3
 		if r.URL == "" {
 			continue
 		}
-		label := r.Display
-		if label == "" {
-			label = strings.ToUpper(r.Language)
-		}
+		// Display is just the language ("English") for every result, so
+		// prefer the file / release name — it's what tells tracks apart.
+		label := firstNonEmpty(r.FileName, r.Release, r.Display, strings.ToUpper(r.Language))
 		tracks = append(tracks, &relaxv1.SubtitleTrack{
 			Language:   r.Language,
 			Label:      label,
@@ -147,6 +148,15 @@ func (c *Client) Download(ctx context.Context, ref string) (string, error) {
 	}
 	// ponytail: ASS/SSA arrive rarely — treat as SRT (basic strip is good enough; upgrade if users report missing styling).
 	return srtToVTT(text), nil
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v = strings.TrimSpace(v); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 var commaTimecode = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}),(\d{3})`)

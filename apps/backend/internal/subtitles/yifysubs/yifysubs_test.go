@@ -54,6 +54,21 @@ func TestSearchParsesRowsFromHTML(t *testing.T) {
 	}
 }
 
+func TestReleaseNameFromLinkText(t *testing.T) {
+	// Real yifysubtitles.ch markup (2026-10).
+	row := []byte(`<td> <a href="/subtitles/the-matrix-1999-english-yify-119099"><span class="text-muted">subtitle</span> The.Matrix.1999.1080p.720p.BluRay.x264.[YTS.AG]</a> </td>`)
+	m := linkRe.FindSubmatch(row)
+	if m == nil {
+		t.Fatal("linkRe did not match")
+	}
+	if got, want := releaseName(m[2]), "The.Matrix.1999.1080p.720p.BluRay.x264.[YTS.AG]"; got != want {
+		t.Fatalf("releaseName = %q, want %q", got, want)
+	}
+	if got := releaseName([]byte(`<span class="text-muted">subtitle</span>`)); got != "" {
+		t.Fatalf("expected empty name for span-only link, got %q", got)
+	}
+}
+
 func TestSRTToVTTAddsHeaderAndDotTimecodes(t *testing.T) {
 	srt := "1\r\n00:00:01,500 --> 00:00:02,750\r\nHello\r\n"
 	vtt := srtToVTT(srt)

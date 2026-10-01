@@ -39,6 +39,7 @@ type osSearchResponse struct {
 	Data []struct {
 		Attributes struct {
 			Language string `json:"language"`
+			Release  string `json:"release"`
 			Files    []struct {
 				FileID   int64  `json:"file_id"`
 				FileName string `json:"file_name"`
@@ -97,13 +98,19 @@ func (c *Client) Search(ctx context.Context, imdbID string, season, episode int3
 			continue
 		}
 		file := item.Attributes.Files[0]
-		key := lang
-		label := langName(lang)
-		if seen[key] {
-			// Disambiguate with a counter suffix.
-			label = fmt.Sprintf("%s (%d)", label, len(tracks)+1)
-		} else {
-			seen[key] = true
+		// The release / file name is what tells tracks apart; fall back to
+		// the language with a counter suffix when neither is set.
+		label := strings.TrimSpace(item.Attributes.Release)
+		if label == "" {
+			label = strings.TrimSpace(file.FileName)
+		}
+		if label == "" {
+			label = langName(lang)
+			if seen[lang] {
+				label = fmt.Sprintf("%s (%d)", label, len(tracks)+1)
+			} else {
+				seen[lang] = true
+			}
 		}
 		tracks = append(tracks, &relaxv1.SubtitleTrack{
 			Language:       lang,
