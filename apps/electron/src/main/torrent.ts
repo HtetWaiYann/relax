@@ -12,7 +12,9 @@ import {
   rmSync,
   readFileSync,
   writeFileSync,
+  createReadStream,
 } from 'node:fs';
+import { setPriority } from 'node:os';
 import { join } from 'node:path';
 import { app, ipcMain, type WebContents } from 'electron';
 import process from 'node:process';
@@ -119,8 +121,6 @@ interface Session {
   // unprobeable; don't spawn ffprobe again on every stream request.
   probeFailed: boolean;
   selectedAudioTypeIdx: number;
-  // Cache: subtitle typeIdx -> extracted VTT text.
-  mkvSubCache: Map<number, string>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -421,7 +421,6 @@ async function start(args: StartArgs): Promise<StartResult> {
       probe: null,
       probeFailed: false,
       selectedAudioTypeIdx: 0,
-      mkvSubCache: new Map(),
     };
     sessions.set(args.infoHash, sess);
     const tick = () => broadcastStats(args.infoHash, buildStats(torrent, sess!));
@@ -997,7 +996,13 @@ async function handleSubtitle(res: ServerResponse, infoHash: string, fileIdx: nu
   }
 }
 
+// MKV-embedded subtitles are interleaved through the whole file, which is
+// usually only partly downloaded. Extraction reads /disk (downloaded pieces
+// only — never zero-filled gaps, never triggers downloads) and the renderer
+// asks for a window around the playhead (?from=&to=), so each request is
+// bounded and nothing incomplete gets cached.
 async function handleMkvSubtitle(
+  req: IncomingMessage,
   res: ServerResponse,
   infoHash: string,
   fileIdx: number,
@@ -1016,44 +1021,96 @@ async function handleMkvSubtitle(
     res.end('subtitle stream not extractable');
     return;
   }
-  const cached = sess.mkvSubCache.get(streamTypeIdx);
-  if (cached !== undefined) {
-    res.writeHead(200, {
-      'Content-Type': 'text/vtt; charset=utf-8',
-      'Access-Control-Allow-Origin': '*',
-      'Cache-Control': 'public, max-age=3600',
-    });
-    res.end(cached);
-    return;
-  }
+  const q = new URL(req.url ?? '', STREAM_BASE_URL).searchParams;
+  const from = Number(q.get('from'));
+  const to = Number(q.get('to'));
+  const window = q.has('from') && q.has('to') && from >= 0 && to > from ? { from, to } : undefined;
 
-  const ff = spawnSubtitleExtract(sess.filePath, streamTypeIdx);
+  const ff = spawnSubtitleExtract(
+    `http://localhost:${STREAM_PORT}/disk/${infoHash}/${fileIdx}`,
+    streamTypeIdx,
+    window,
+  );
+  // Bounded work, but still shouldn't compete with playback for CPU.
+  try { if (ff.pid) setPriority(ff.pid, 10); } catch { /* best-effort */ }
+  req.on('close', () => { if (!res.writableEnded) ff.kill('SIGKILL'); });
   const chunks: Buffer[] = [];
   ff.stdout.on('data', (c: Buffer) => chunks.push(c));
   ff.stderr.on('data', (c: Buffer) => {
+    // A read stopping at the first missing piece is expected, not an error.
     const s = c.toString().trim();
-    if (s) console.log(`[ffmpeg-sub] ${s}`);
+    if (s && !/Stream ends prematurely|Read error/.test(s)) console.log(`[ffmpeg-sub] ${s}`);
   });
   ff.on('close', (code) => {
+    if (res.writableEnded) return;
     if (code !== 0 && chunks.length === 0) {
       res.writeHead(500);
       res.end('subtitle extract failed');
       return;
     }
-    const vtt = Buffer.concat(chunks).toString('utf8');
-    sess.mkvSubCache.set(streamTypeIdx, vtt);
     res.writeHead(200, {
       'Content-Type': 'text/vtt; charset=utf-8',
       'Access-Control-Allow-Origin': '*',
-      'Cache-Control': 'public, max-age=3600',
+      'Cache-Control': 'no-store',
     });
-    res.end(vtt);
+    res.end(Buffer.concat(chunks));
   });
   ff.on('error', (err) => {
     console.warn('[ffmpeg-sub] spawn failed', err);
+    if (res.writableEnded) return;
     res.writeHead(500);
     res.end('subtitle extract spawn failed');
   });
+}
+
+// On-disk bytes of a torrent file, limited to pieces we actually have: a
+// range response is cut at the first missing piece, and a request starting
+// on a missing piece gets headers then an immediate close. ffmpeg reads both
+// as EOF without losing the file size (a 416 makes it forget the size and
+// break seeking). Verified against ffmpeg 6 with a gapped MKV.
+async function handleDisk(
+  req: IncomingMessage,
+  res: ServerResponse,
+  infoHash: string,
+  fileIdx: number,
+) {
+  const t = await getTorrent(infoHash);
+  const file = t ? fileFor(t, fileIdx) : null;
+  const sess = sessions.get(infoHash);
+  if (!file || !sess || sess.fileIdx !== fileIdx) {
+    res.writeHead(404);
+    res.end('not found');
+    return;
+  }
+  const size: number = file.length;
+  const range = parseRange(req.headers.range, size) ?? { start: 0, end: size - 1 };
+  const pieceLen: number = t.pieceLength;
+  const offset: number = file.offset ?? 0;
+  const firstPiece = Math.floor((offset + range.start) / pieceLen);
+  const lastPiece = Math.floor((offset + range.end) / pieceLen);
+  let p = firstPiece;
+  while (p <= lastPiece && t.bitfield?.get(p)) p++;
+  if (p === firstPiece) {
+    res.writeHead(206, {
+      'Content-Range': `bytes ${range.start}-${range.end}/${size}`,
+      'Content-Length': range.end - range.start + 1,
+      'Accept-Ranges': 'bytes',
+    });
+    res.flushHeaders();
+    res.destroy();
+    return;
+  }
+  const end = Math.min(range.end, p * pieceLen - offset - 1);
+  res.writeHead(206, {
+    'Content-Range': `bytes ${range.start}-${end}/${size}`,
+    'Content-Length': end - range.start + 1,
+    'Accept-Ranges': 'bytes',
+    'Content-Type': 'application/octet-stream',
+  });
+  const stream = createReadStream(sess.filePath, { start: range.start, end });
+  stream.on('error', () => res.destroy());
+  stream.pipe(res);
+  req.on('close', () => stream.destroy());
 }
 
 export function startStreamServer(): Server {
@@ -1073,6 +1130,11 @@ export function startStreamServer(): Server {
       void handleRaw(req, res, m[1].toLowerCase(), parseInt(m[2], 10));
       return;
     }
+    m = /^\/disk\/([a-f0-9]+)\/(\d+)/i.exec(url);
+    if (m) {
+      void handleDisk(req, res, m[1].toLowerCase(), parseInt(m[2], 10));
+      return;
+    }
     m = /^\/stream\/([a-f0-9]+)\/(\d+)/i.exec(url);
     if (m) {
       void handleStream(req, res, m[1].toLowerCase(), parseInt(m[2], 10));
@@ -1080,7 +1142,7 @@ export function startStreamServer(): Server {
     }
     m = /^\/mkvsub\/([a-f0-9]+)\/(\d+)\/(\d+)\.vtt/i.exec(url);
     if (m) {
-      void handleMkvSubtitle(res, m[1].toLowerCase(), parseInt(m[2], 10), parseInt(m[3], 10));
+      void handleMkvSubtitle(req, res, m[1].toLowerCase(), parseInt(m[2], 10), parseInt(m[3], 10));
       return;
     }
     m = /^\/sub\/([a-f0-9]+)\/(\d+)\.vtt/i.exec(url);

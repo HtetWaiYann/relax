@@ -172,16 +172,19 @@ export function spawnRemux(opts: {
   return spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-// Extract a single subtitle stream as WebVTT on stdout.
+// Extract a single subtitle stream as WebVTT on stdout, optionally only the
+// cues in [from, to) seconds. -copyts keeps cue times absolute after the
+// input seek; the bound must be the *output* -to — input -t doesn't stop a
+// subtitle-only read.
 export function spawnSubtitleExtract(
-  filePath: string,
+  input: string,
   subtitleTypeIdx: number,
+  window?: { from: number; to: number },
 ) {
-  return spawn(FFMPEG_PATH, [
-    '-hide_banner', '-loglevel', 'error',
-    '-i', filePath,
-    '-map', `0:s:${subtitleTypeIdx}`,
-    '-f', 'webvtt',
-    'pipe:1',
-  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const args = ['-hide_banner', '-loglevel', 'error'];
+  if (window) args.push('-ss', window.from.toFixed(3), '-copyts');
+  args.push('-i', input, '-map', `0:s:${subtitleTypeIdx}`);
+  if (window) args.push('-to', window.to.toFixed(3));
+  args.push('-f', 'webvtt', 'pipe:1');
+  return spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 }
