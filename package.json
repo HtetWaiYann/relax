@@ -1,6 +1,6 @@
 {
   "name": "relax",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "private": true,
   "description": "RELAX — desktop torrent-streaming app for movie geeks.",
   "license": "MIT",
@@ -16,7 +16,6 @@
     "test": "turbo run test",
     "gen:proto": "buf generate",
     "dist": "pnpm gen:proto && pnpm --filter @relax/electron dist",
-    "dist:all": "pnpm gen:proto && pnpm --filter @relax/electron dist:all",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md,yaml,yml}\""
   },
   "devDependencies": {
