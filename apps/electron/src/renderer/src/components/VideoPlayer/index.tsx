@@ -35,6 +35,7 @@ import { useAudioTracks } from './hooks/useAudioTracks';
 import { useAutoHideControls } from './hooks/useAutoHideControls';
 import { useFullscreen } from './hooks/useFullscreen';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useMediaSession } from './hooks/useMediaSession';
 import { useSubtitles } from './hooks/useSubtitles';
 import { useToast } from './hooks/useToast';
 import { useVideoPlayback } from './hooks/useVideoPlayback';
@@ -176,6 +177,17 @@ export function VideoPlayer(props: VideoPlayerProps) {
     displayTime,
     setVolume,
     setMuted,
+  });
+
+  useMediaSession({
+    videoRef,
+    title,
+    subtitle,
+    posterUrl,
+    displayTime,
+    duration: effectiveDuration,
+    rate,
+    seekTo,
   });
 
   const { volumeHud } = useWheelVolume({ containerRef, videoRef, panel, wake });
