@@ -180,6 +180,8 @@ let client: any | null = null;
 let streamServer: ReturnType<typeof createServer> | null = null;
 const sessions = new Map<string, Session>();
 const subscribers = new Map<string, Set<WebContents>>();
+// Active piece-priority hint per `${infoHash}:${fileIdx}` (see setPosition).
+const hintStreams = new Map<string, { stream: { destroy(): void }; start: number }>();
 
 // Safeguard: webtorrent can throw synchronously from a wire's handshake
 // listener when a peer completes its handshake a tick after its torrent was
@@ -529,6 +531,7 @@ async function clearCache(infoHash?: string): Promise<{ freedBytes: number }> {
 async function stop(infoHash: string): Promise<void> {
   const sess = sessions.get(infoHash);
   if (sess?.statsTimer) clearInterval(sess.statsTimer);
+  destroyHints(infoHash);
   sessions.delete(infoHash);
   subscribers.delete(infoHash);
   if (!client) return;
@@ -593,10 +596,26 @@ async function setPosition(infoHash: string, fileIdx: number, positionSeconds: n
   if (totalSeconds <= 0) return;
   const bytesPerSec = file.length / totalSeconds;
   const startByte = Math.max(0, Math.floor(positionSeconds * bytesPerSec));
+  // The renderer reports position every ~1.5s; keep the current hint while
+  // we're still in its first 20s instead of churning a new stream per tick.
+  const key = `${infoHash}:${fileIdx}`;
+  const prev = hintStreams.get(key);
+  if (prev && startByte >= prev.start && startByte < prev.start + bytesPerSec * 20) return;
+  // One hint per file: a stale window would keep prioritising pieces the
+  // viewer has already seeked away from.
+  prev?.stream.destroy();
   const endByte = Math.min(file.length - 1, startByte + Math.floor(bytesPerSec * 30));
   const stream = file.createReadStream({ start: startByte, end: endByte });
-  stream.resume();
+  hintStreams.set(key, { stream, start: startByte });
   stream.on('error', () => undefined);
+  stream.on('close', () => { if (hintStreams.get(key)?.stream === stream) hintStreams.delete(key); });
+  stream.resume();
+}
+
+function destroyHints(infoHash: string) {
+  for (const [key, h] of hintStreams) {
+    if (key.startsWith(`${infoHash}:`)) { h.stream.destroy(); hintStreams.delete(key); }
+  }
 }
 
 function guessDurationSeconds(file: FileLike): number {
