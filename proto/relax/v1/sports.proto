@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package relax.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "relax/gen/relax/v1;relaxv1";
+
+enum MatchStatus {
+  MATCH_STATUS_UNSPECIFIED = 0;
+  MATCH_STATUS_SCHEDULED = 1;
+  MATCH_STATUS_LIVE = 2;
+  // Half-time / break in play.
+  MATCH_STATUS_PAUSED = 3;
+  MATCH_STATUS_FINISHED = 4;
+  // Postponed, suspended or cancelled.
+  MATCH_STATUS_POSTPONED = 5;
+}
+
+message Team {
+  string name = 1;
+  string short_name = 2;
+  string crest_url = 3;
+}
+
+message Competition {
+  string code = 1;
+  string name = 2;
+  string emblem_url = 3;
+}
+
+message Match {
+  int32 id = 1;
+  Competition competition = 2;
+  Team home = 3;
+  Team away = 4;
+  google.protobuf.Timestamp kickoff = 5;
+  MatchStatus status = 6;
+  // Only meaningful when has_score is true (kicked off).
+  int32 home_score = 7;
+  int32 away_score = 8;
+  bool has_score = 9;
+}
+
+// LiveStream is one playable source for a match. play_url points at the
+// backend HLS proxy, never at the upstream host.
+message LiveStream {
+  string name = 1;
+  string title = 2;
+  string play_url = 3;
+}
+
+// The renderer sends its local day bounds so "today" follows the user's
+// timezone rather than UTC.
+message GetTodayMatchesRequest {
+  google.protobuf.Timestamp day_start = 1;
+  google.protobuf.Timestamp day_end = 2;
+}
+
+message GetTodayMatchesResponse {
+  repeated Match matches = 1;
+}
+
+message GetMatchStreamsRequest {
+  int32 match_id = 1;
+}
+
+message GetMatchStreamsResponse {
+  Match match = 1;
+  repeated LiveStream streams = 2;
+  // False when SPORTS_ADDON_URL is unset.
+  bool source_configured = 3;
+}

@@ -3,6 +3,7 @@ syntax = "proto3";
 package relax.v1;
 
 import "relax/v1/media.proto";
+import "relax/v1/sports.proto";
 import "relax/v1/streams.proto";
 import "relax/v1/torrent.proto";
 import "relax/v1/watch_progress.proto";
@@ -266,4 +267,6 @@ service RelaxService {
   rpc GetWatchlist(GetWatchlistRequest) returns (GetWatchlistResponse);
   rpc IsInWatchlist(IsInWatchlistRequest) returns (IsInWatchlistResponse);
   rpc ClearWatchlist(ClearWatchlistRequest) returns (ClearWatchlistResponse);
+  rpc GetTodayMatches(GetTodayMatchesRequest) returns (GetTodayMatchesResponse);
+  rpc GetMatchStreams(GetMatchStreamsRequest) returns (GetMatchStreamsResponse);
 }
