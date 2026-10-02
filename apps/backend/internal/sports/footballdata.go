@@ -8,11 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	relaxv1 "relax/gen/relax/v1"
@@ -26,6 +29,9 @@ const (
 	httpTimeout = 10 * time.Second
 )
 
+// debugMatchID marks the synthetic SPORTS_DEBUG_MATCH fixture.
+const debugMatchID = math.MaxInt32
+
 // ErrNoAPIKey is returned when FOOTBALL_DATA_API_KEY is unset.
 var ErrNoAPIKey = errors.New("FOOTBALL_DATA_API_KEY is not set")
 
@@ -33,6 +39,7 @@ var ErrNoAPIKey = errors.New("FOOTBALL_DATA_API_KEY is not set")
 type Fixtures struct {
 	apiKey       string
 	competitions string // comma-separated codes, e.g. "PL,PD"
+	debug        *relaxv1.Match
 	http         *http.Client
 
 	mu    sync.Mutex
@@ -44,13 +51,34 @@ type fixturesEntry struct {
 	matches []*relaxv1.Match
 }
 
-func NewFixtures(apiKey, competitions string) *Fixtures {
-	return &Fixtures{
+// NewFixtures builds the client. debugMatch ("Home vs Away", optional) adds
+// a fake always-live fixture so the stream pipeline can be tested on days
+// with no real matches.
+func NewFixtures(apiKey, competitions, debugMatch string) *Fixtures {
+	f := &Fixtures{
 		apiKey:       apiKey,
 		competitions: competitions,
 		http:         &http.Client{Timeout: httpTimeout},
 		cache:        map[string]fixturesEntry{},
 	}
+	if home, away, ok := strings.Cut(debugMatch, " vs "); ok {
+		f.debug = &relaxv1.Match{
+			Id:          debugMatchID,
+			Competition: &relaxv1.Competition{Code: "DEBUG", Name: "Debug (SPORTS_DEBUG_MATCH)"},
+			Home:        &relaxv1.Team{Name: strings.TrimSpace(home)},
+			Away:        &relaxv1.Team{Name: strings.TrimSpace(away)},
+			Status:      relaxv1.MatchStatus_MATCH_STATUS_LIVE,
+			HasScore:    true,
+		}
+	}
+	return f
+}
+
+// debugMatch returns the synthetic fixture with a kickoff 30 minutes ago.
+func (f *Fixtures) debugMatch() *relaxv1.Match {
+	m := proto.Clone(f.debug).(*relaxv1.Match)
+	m.Kickoff = timestamppb.New(time.Now().Add(-30 * time.Minute))
+	return m
 }
 
 type fdTeam struct {
@@ -81,6 +109,17 @@ type fdMatch struct {
 // Between returns matches kicking off in [start, end). The free tier allows
 // 10 req/min, so results are cached per range (see liveTTL / settledTTL).
 func (f *Fixtures) Between(ctx context.Context, start, end time.Time) ([]*relaxv1.Match, error) {
+	matches, err := f.between(ctx, start, end)
+	if err != nil {
+		return nil, err
+	}
+	if now := time.Now(); f.debug != nil && !now.Before(start) && now.Before(end) {
+		matches = append([]*relaxv1.Match{f.debugMatch()}, matches...)
+	}
+	return matches, nil
+}
+
+func (f *Fixtures) between(ctx context.Context, start, end time.Time) ([]*relaxv1.Match, error) {
 	if f.apiKey == "" {
 		return nil, ErrNoAPIKey
 	}
@@ -124,6 +163,9 @@ func (f *Fixtures) Between(ctx context.Context, start, end time.Time) ([]*relaxv
 
 // ByID fetches one match fresh (current score/status).
 func (f *Fixtures) ByID(ctx context.Context, id int32) (*relaxv1.Match, error) {
+	if id == debugMatchID && f.debug != nil {
+		return f.debugMatch(), nil
+	}
 	if f.apiKey == "" {
 		return nil, ErrNoAPIKey
 	}

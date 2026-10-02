@@ -67,7 +67,7 @@ func run() error {
 
 	liveProxy := sports.NewProxy()
 	relaxSrv := server.NewRelaxServer(logger, meta, streamsProvider, subtitleProviders, cfg.SubtitleCacheDir, cfg.Port, store).
-		WithSports(sports.NewFixtures(cfg.FootballDataAPIKey, cfg.SportsCompetitions), sports.NewAddon(cfg.SportsAddonURL), liveProxy)
+		WithSports(sports.NewFixtures(cfg.FootballDataAPIKey, cfg.SportsCompetitions, cfg.SportsDebugMatch), sports.NewAddon(cfg.SportsAddonURL), liveProxy)
 	path, handler := relaxv1connect.NewRelaxServiceHandler(relaxSrv)
 
 	if err := os.MkdirAll(cfg.SubtitleCacheDir, 0o755); err != nil {

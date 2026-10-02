@@ -28,6 +28,9 @@ type Config struct {
 	// SportsAddonURL is a Stremio-protocol addon base (or manifest.json) URL
 	// used to find live streams for a match. Empty disables streams.
 	SportsAddonURL string `env:"SPORTS_ADDON_URL"`
+	// SportsDebugMatch ("Home vs Away") injects a fake live fixture into
+	// today's list for testing the addon. Leave empty normally.
+	SportsDebugMatch string `env:"SPORTS_DEBUG_MATCH"`
 	// HistoryTTLDays caps watch_progress retention. 0 disables the startup
 	// cleanup; otherwise rows with last_watched_at older than this many days
 	// are deleted at backend init.
