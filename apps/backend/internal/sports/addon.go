@@ -94,7 +94,12 @@ func (a *Addon) StreamsFor(ctx context.Context, home, away []string) ([]AddonStr
 
 	ev, ok := findEvent(events, home, away)
 	if !ok {
-		slog.Info("no addon event for match", "home", home, "away", away, "events", len(events))
+		names := make([]string, 0, min(len(events), 30))
+		for _, e := range events[:min(len(events), 30)] {
+			names = append(names, e.Name)
+		}
+		// Logs a sample of what the addon lists, to see why names didn't match.
+		slog.Info("no addon event for match", "home", home, "away", away, "events", len(events), "sample", names)
 		return []AddonStream{}, nil
 	}
 
